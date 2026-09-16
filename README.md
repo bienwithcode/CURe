@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> **Development has moved to [cure-light](https://github.com/grzegorznowak/cure-light).**
+> CURe is no longer actively maintained. This repository remains available for reference, but new work happens in cure-light, a lighter diagnostic PR review pipeline.
+
 > [!WARNING]
 > **Read this first: [ChunkHound](https://github.com/chunkhound/chunkhound) and disk requirements.** CURe cannot run reviews until ChunkHound is fully installed, configured, and confirmed working end-to-end. When possible, use the latest ChunkHound `main` branch so CURe gets current indexing and research behavior.
 >
