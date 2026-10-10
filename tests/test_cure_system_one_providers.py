@@ -258,3 +258,56 @@ def test_openrouter_chat_provider_removed() -> None:
         create_provider("openrouter", None)
     with pytest.raises(SystemOneConfigError):
         resolve_system_one_config({"enabled": True, "provider": "openrouter"})
+
+
+def test_decisions_request_shapes_for_noul_and_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from cure_system_one.providers import decisions as decisions_module
+    from cure_system_one.providers.decisions import DecisionsAdapter
+
+    captured: dict[str, object] = {}
+    adapter = DecisionsAdapter(_decisions_config())
+
+    def _capture(envelope: dict):
+        def _urlopen(request, timeout=None):
+            captured["data"] = request.data
+            return _FakeResponse(envelope)
+
+        return _urlopen
+
+    # noul: no criteria key; claim/evidence are the whole question.
+    monkeypatch.setattr(
+        decisions_module.urllib.request,
+        "urlopen",
+        _capture({"answers": {"noul": {"type": "noul", "noul": 0.9}}}),
+    )
+    raw, _ = adapter.complete(
+        "noul", {"input": {"claim": "c", "evidence": "e"}}, deadline=None
+    )
+    question = json.loads(bytes(captured["data"]).decode("utf-8"))["questions"]["noul"]
+    assert question == {
+        "type": "noul",
+        "instructions": {"claim": "c", "evidence": "e"},
+    }
+    assert raw == {"probability": 0.9}
+
+    # score: criteria must be a string array; the answer index maps onto min..max.
+    monkeypatch.setattr(
+        decisions_module.urllib.request,
+        "urlopen",
+        _capture(
+            {"answers": {"score": {"type": "score", "score": 0.5, "confidence": 0.9}}}
+        ),
+    )
+    raw, _ = adapter.complete(
+        "score",
+        {"input": {"subject": "s", "rubric": {"min": 2, "max": 8}}},
+        deadline=None,
+    )
+    question = json.loads(bytes(captured["data"]).decode("utf-8"))["questions"]["score"]
+    assert question["type"] == "score"
+    assert question["criteria"] == ["2", "8"]
+    assert raw == {"score": 5.0, "confidence": 0.9}
