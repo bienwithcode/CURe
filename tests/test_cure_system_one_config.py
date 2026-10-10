@@ -120,6 +120,6 @@ def test_default_grounding_threshold_matches_calibrated_decisions() -> None:
     )
 
     assert DEFAULT_PROVIDER == "openrouter-decisions"
-    assert DEFAULT_GROUNDING_CONFIDENCE_MIN == 0.5
+    assert DEFAULT_GROUNDING_CONFIDENCE_MIN == 0.6
     resolved = resolve_system_one_config({"enabled": True})
-    assert resolved.grounding_confidence_min == 0.5
+    assert resolved.grounding_confidence_min == 0.6
