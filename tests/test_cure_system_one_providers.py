@@ -206,7 +206,7 @@ def test_decisions_translates_typed_answer(monkeypatch: pytest.MonkeyPatch) -> N
 
     _recorded_decisions(
         monkeypatch,
-        {"answers": {"noul": {"type": "noul", "probability": 0.82, "confidence": 1}}},
+        {"answers": {"noul": {"type": "noul", "noul": 0.82}}},
     )
     raw, _ = adapter.complete(
         "noul", {"input": {"claim": "c", "evidence": "e"}}, deadline=None
@@ -215,12 +215,12 @@ def test_decisions_translates_typed_answer(monkeypatch: pytest.MonkeyPatch) -> N
 
     _recorded_decisions(
         monkeypatch,
-        {"answers": {"score": {"type": "score", "score": 7, "confidence": 0.5}}},
+        {"answers": {"score": {"type": "score", "score": 0.7, "confidence": 0.5}}},
     )
     raw, _ = adapter.complete(
         "score", {"input": {"subject": "s", "rubric": {"min": 0, "max": 10}}}, deadline=None
     )
-    assert raw == {"score": 7, "confidence": 0.5}
+    assert raw == {"score": 7.0, "confidence": 0.5}
 
     # A missing answer and a mismatched type both return the raw envelope.
     _recorded_decisions(monkeypatch, {"answers": {}})

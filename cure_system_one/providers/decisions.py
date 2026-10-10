@@ -81,7 +81,10 @@ class DecisionsAdapter:
             envelope = json.loads(raw_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             return {"error": "malformed provider response"}, latency
-        return self._translate(operation, envelope), latency
+        fields = request_payload.get("input", {})
+        if not isinstance(fields, dict):
+            fields = {}
+        return self._translate(operation, envelope, fields), latency
 
     # -- request mapping ----------------------------------------------------
 
@@ -105,36 +108,47 @@ class DecisionsAdapter:
     @staticmethod
     def _build_question(operation: str, fields: dict[str, Any]) -> dict[str, Any]:
         if operation == "noul":
-            instructions: Any = {
-                "claim": fields.get("claim", ""),
-                "evidence": fields.get("evidence", ""),
+            # ``noul`` takes no criteria: the claim and evidence are the whole
+            # question, and the endpoint rejects an empty criteria object.
+            return {
+                "type": "noul",
+                "instructions": {
+                    "claim": fields.get("claim", ""),
+                    "evidence": fields.get("evidence", ""),
+                },
             }
-            criteria: Any = {}
-        elif operation == "choice":
-            instructions = {
-                "subject": fields.get("subject", ""),
-                "context": fields.get("context", ""),
+        if operation == "choice":
+            return {
+                "type": "choice",
+                "instructions": {
+                    "subject": fields.get("subject", ""),
+                    "context": fields.get("context", ""),
+                },
+                "criteria": {
+                    str(option): str(option) for option in fields.get("options", [])
+                },
             }
-            criteria = {
-                str(option): str(option) for option in fields.get("options", [])
-            }
-        elif operation == "score":
-            instructions = {
-                "subject": fields.get("subject", ""),
-                "context": fields.get("context", ""),
-            }
+        if operation == "score":
             rubric = fields.get("rubric", {})
             rubric = rubric if isinstance(rubric, dict) else {}
-            criteria = {"min": rubric.get("min"), "max": rubric.get("max")}
-        else:
-            instructions = dict(fields)
-            criteria = {}
-        return {"type": operation, "instructions": instructions, "criteria": criteria}
+            # The endpoint requires ``score`` criteria to be an array; the two
+            # rubric bounds are the scale endpoints the answer index maps onto.
+            return {
+                "type": "score",
+                "instructions": {
+                    "subject": fields.get("subject", ""),
+                    "context": fields.get("context", ""),
+                },
+                "criteria": [str(rubric.get("min")), str(rubric.get("max"))],
+            }
+        return {"type": operation, "instructions": dict(fields)}
 
     # -- answer translation -------------------------------------------------
 
     @staticmethod
-    def _translate(operation: str, envelope: Any) -> dict[str, Any]:
+    def _translate(
+        operation: str, envelope: Any, fields: dict[str, Any]
+    ) -> dict[str, Any]:
         if not isinstance(envelope, dict):
             return {"error": "provider response is not a JSON object"}
         answers = envelope.get("answers")
@@ -144,7 +158,11 @@ class DecisionsAdapter:
         if not isinstance(answer, dict) or answer.get("type") != operation:
             return envelope
         if operation == "noul":
-            probability = answer.get("probability")
+            # The decisions answer carries the probability under ``noul``; the
+            # other keys are accepted for recorded/idealized envelopes.
+            probability = answer.get("noul")
+            if not _is_number(probability):
+                probability = answer.get("probability")
             if not _is_number(probability):
                 probability = _single_probability(answer.get("probabilities"))
             if not _is_number(probability):
@@ -157,11 +175,14 @@ class DecisionsAdapter:
                 return envelope
             return {"selected": selected, "confidence": confidence}
         if operation == "score":
-            score = answer.get("score")
+            index = answer.get("score")
             confidence = answer.get("confidence")
-            if not _is_number(score) or not _is_number(confidence):
+            if not _is_number(index) or not _is_number(confidence):
                 return envelope
-            return {"score": score, "confidence": confidence}
+            value = _rubric_value(fields, index)
+            if value is None:
+                return envelope
+            return {"score": value, "confidence": confidence}
         return envelope
 
     # -- transport helpers --------------------------------------------------
@@ -207,3 +228,26 @@ def _single_probability(probabilities: Any) -> Any:
     if len(values) == 1:
         return values[0]
     return None
+
+
+def _rubric_value(fields: dict[str, Any], index: Any) -> float | None:
+    """Map a decisions score index onto the rubric's inclusive ``min``..``max``.
+
+    The endpoint returns ``score`` as the probability-weighted index into the
+    two-entry criteria array, so ``0`` maps to ``min`` and ``1`` maps to
+    ``max``. The index is clamped to ``[0, 1]`` so a stray value can never push
+    the translated score outside the rubric the client validates against.
+    """
+    rubric = fields.get("rubric", {})
+    if not isinstance(rubric, dict):
+        return None
+    minimum = rubric.get("min")
+    maximum = rubric.get("max")
+    if not _is_number(minimum) or not _is_number(maximum):
+        return None
+    ratio = float(index)
+    if ratio < 0.0:
+        ratio = 0.0
+    elif ratio > 1.0:
+        ratio = 1.0
+    return float(minimum) + ratio * (float(maximum) - float(minimum))
