@@ -107,3 +107,19 @@ def test_extract_system_one_section_is_pure_and_tolerant() -> None:
     assert extract_system_one_section({"other": 1}) is None
     assert extract_system_one_section(None) is None
     assert extract_system_one_section("not-a-table") is None
+
+
+def test_default_grounding_threshold_matches_calibrated_decisions() -> None:
+    # The shipped default provider is the calibrated decisions adapter, so the
+    # grounding floor must sit below its truth probabilities (empirically
+    # 0.62-0.77), not at the chat-model-era 0.80.
+    from cure_system_one.config import (
+        DEFAULT_GROUNDING_CONFIDENCE_MIN,
+        DEFAULT_PROVIDER,
+        resolve_system_one_config,
+    )
+
+    assert DEFAULT_PROVIDER == "openrouter-decisions"
+    assert DEFAULT_GROUNDING_CONFIDENCE_MIN == 0.5
+    resolved = resolve_system_one_config({"enabled": True})
+    assert resolved.grounding_confidence_min == 0.5

@@ -147,8 +147,9 @@ def test_pipeline_empty_matrix_signal(
 ) -> None:
     from cure_system_one.pipeline import resolve_synth_inputs
 
-    # An unscripted canned local provider answers noul with 0.5 < 0.80.
-    config = _config()
+    # An unscripted canned local provider answers noul with 0.5, below the
+    # explicit 0.8 floor, so every mechanically-valid citation is excluded.
+    config = _config(grounding_confidence_min=0.8)
     repo = _repo(tmp_path, {"src/a.py": "one\ntwo\n"})
     client = _client(config, None, tmp_path, monkeypatch)
     session_dir = tmp_path / "empty"

@@ -670,7 +670,7 @@ def replay_runs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     script_path = tmp_path_factory.mktemp("replay-script") / "system_one_script.json"
     script_path.write_text(
         json.dumps(
-            {"noul": [{"value": {"probability": 0.5}}] + [{"value": {"probability": 0.9}}] * 20}
+            {"noul": [{"value": {"probability": 0.4}}] + [{"value": {"probability": 0.9}}] * 20}
         ),
         encoding="utf-8",
     )
