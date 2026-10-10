@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import os
@@ -24,6 +24,13 @@ from _doctor_chunkhound_fixture import index_fixture_for_health_check
 from cure_errors import ReviewflowError
 from cure_sessions import PullRequestRef, parse_pr_url
 from meta import json_fingerprint
+from cure_system_one import (
+    SystemOneClient,
+    SystemOneConfigError,
+    SystemOneError,
+    create_provider,
+    resolve_system_one_config,
+)
 from paths import (
     ReviewflowPaths,
     default_cache_root,
@@ -42,6 +49,9 @@ REMOVED_HTTP_LLM_PROVIDERS = ("openai", "openrouter")
 REMOVED_HTTP_LLM_PRESETS = ("openai-responses", "openrouter-responses")
 CLI_LLM_PROVIDERS = ("codex",)
 LLM_RESUME_PROVIDERS = ("codex",)
+_SYSTEM_ONE_API_KEY_PROBE_URL = "https://openrouter.ai/api/v1/key"
+_SYSTEM_ONE_DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
+_SYSTEM_ONE_API_KEY_AUTH_STATUSES = frozenset({401, 402, 403})
 DEFAULT_LEGACY_CODEX_PRESET = "legacy_codex"
 DEFAULT_IMPLICIT_CODEX_PRESET = "codex-cli"
 IMPLICIT_CODEX_PRESET_SOURCE = "implicit_codex_cli"
@@ -3238,6 +3248,121 @@ def _doctor_runtime_payload(
     return payload
 
 
+def _doctor_system_one_first_error_line(exc: BaseException) -> str:
+    for line in str(exc).splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return exc.__class__.__name__
+
+
+def _doctor_system_one_section(runtime: ReviewflowRuntime) -> Any:
+    try:
+        raw_config = load_toml(runtime.config_path)
+    except ReviewflowError:
+        return None
+    if not isinstance(raw_config, dict):
+        return None
+    return raw_config.get("system_one")
+
+
+def _doctor_system_one_config_check(raw_section: Any) -> DoctorCheck | None:
+    try:
+        config = resolve_system_one_config(raw_section)
+    except SystemOneConfigError as exc:
+        return DoctorCheck(
+            name="system-one-config",
+            status="fail",
+            detail=_doctor_system_one_first_error_line(exc),
+        )
+    if not config.enabled:
+        return None
+    return DoctorCheck(
+        name="system-one-config",
+        status="ok",
+        detail=f"provider={config.provider} model={config.model}",
+    )
+
+
+def _doctor_system_one_probe_status_check(status_code: int) -> DoctorCheck:
+    if 200 <= status_code < 300:
+        return DoctorCheck(name="system-one-api-key", status="ok", detail="openrouter key reachable")
+    if status_code in _SYSTEM_ONE_API_KEY_AUTH_STATUSES:
+        return DoctorCheck(
+            name="system-one-api-key",
+            status="fail",
+            detail=f"openrouter rejected the API key (HTTP {status_code})",
+        )
+    return DoctorCheck(
+        name="system-one-api-key",
+        status="warn",
+        detail=f"openrouter key probe inconclusive (HTTP {status_code})",
+    )
+
+
+def _doctor_system_one_openrouter_key_probe(key: str, *, timeout_ms: int) -> DoctorCheck:
+    request = urllib.request.Request(
+        _SYSTEM_ONE_API_KEY_PROBE_URL,
+        headers={"Authorization": f"Bearer {key}", "User-Agent": "cure/0.1.0"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_ms / 1000.0) as response:
+            status = int(getattr(response, "status", None) or response.getcode())
+    except urllib.error.HTTPError as exc:
+        return _doctor_system_one_probe_status_check(exc.code)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return DoctorCheck(
+            name="system-one-api-key",
+            status="warn",
+            detail=f"openrouter key probe failed: {exc}",
+        )
+    return _doctor_system_one_probe_status_check(status)
+
+
+def _doctor_system_one_api_key_check(config: Any) -> DoctorCheck:
+    if config.provider != "openrouter":
+        return DoctorCheck(
+            name="system-one-api-key",
+            status="ok",
+            detail="not required for local provider",
+        )
+    key_env = str(config.api_key_env or "").strip() or _SYSTEM_ONE_DEFAULT_API_KEY_ENV
+    key = os.environ.get(key_env, "").strip()
+    if not key:
+        return DoctorCheck(
+            name="system-one-api-key",
+            status="fail",
+            detail=f"key unset ({key_env})",
+        )
+    return _doctor_system_one_openrouter_key_probe(key, timeout_ms=config.timeout_ms)
+
+
+def _doctor_system_one_selftest_check(config: Any) -> DoctorCheck:
+    local_config = replace(config, provider="local")
+    try:
+        client = SystemOneClient(local_config, create_provider("local", local_config))
+        result = client.noul("System 1 doctor self-test", "canned self-test evidence")
+    except SystemOneError as exc:
+        return DoctorCheck(
+            name="system-one-selftest",
+            status="fail",
+            detail=_doctor_system_one_first_error_line(exc),
+        )
+    probability = result.get("probability") if isinstance(result, dict) else None
+    if not isinstance(probability, (int, float)) or isinstance(probability, bool):
+        return DoctorCheck(
+            name="system-one-selftest",
+            status="fail",
+            detail="local canned round-trip returned an unexpected result",
+        )
+    return DoctorCheck(
+        name="system-one-selftest",
+        status="ok",
+        detail="local canned round-trip succeeded",
+    )
+
+
 def _doctor_runtime_checks(
     runtime: ReviewflowRuntime,
     *,
@@ -3497,6 +3622,14 @@ def _doctor_runtime_checks(
     executor_network = _doctor_executor_network_check(agent_runtime)
     if executor_network is not None:
         checks.append(executor_network)
+    system_one_section = _doctor_system_one_section(runtime)
+    system_one_config_check = _doctor_system_one_config_check(system_one_section)
+    if system_one_config_check is not None:
+        checks.append(system_one_config_check)
+        if system_one_config_check.status == "ok":
+            system_one_config = resolve_system_one_config(system_one_section)
+            checks.append(_doctor_system_one_api_key_check(system_one_config))
+            checks.append(_doctor_system_one_selftest_check(system_one_config))
     return checks
 
 
