@@ -27,7 +27,7 @@ DEFAULT_MAX_CONTEXT_CHARS = 4000
 DEFAULT_MAX_SUBJECT_CHARS = 2000
 DEFAULT_BATCH_CHUNK_SIZE = 100
 
-SUPPORTED_PROVIDERS = ("openrouter-decisions", "openrouter", "local")
+SUPPORTED_PROVIDERS = ("openrouter-decisions", "local")
 
 
 @dataclass(frozen=True)

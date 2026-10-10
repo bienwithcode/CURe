@@ -55,12 +55,6 @@ class ProviderAdapter(Protocol):
         ...
 
 
-def _openrouter_factory(config: Any) -> ProviderAdapter:
-    from cure_system_one.providers.openrouter import OpenRouterAdapter
-
-    return OpenRouterAdapter(config)
-
-
 def _local_factory(config: Any) -> ProviderAdapter:
     from cure_system_one.providers.local import LocalProvider
 
@@ -75,7 +69,6 @@ def _decisions_factory(config: Any) -> ProviderAdapter:
 
 _PROVIDER_FACTORIES: dict[str, Callable[[Any], ProviderAdapter]] = {
     "openrouter-decisions": _decisions_factory,
-    "openrouter": _openrouter_factory,
     "local": _local_factory,
 }
 

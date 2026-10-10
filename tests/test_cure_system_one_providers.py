@@ -11,7 +11,7 @@ def test_registry_and_transport_error() -> None:
         provider_names,
     )
 
-    assert set(provider_names()) == {"openrouter", "openrouter-decisions", "local"}
+    assert set(provider_names()) == {"openrouter-decisions", "local"}
 
     with pytest.raises(SystemOneConfigError):
         create_provider("typesafe", None)
@@ -42,80 +42,6 @@ class _FakeResponse:
 
     def __exit__(self, *exc: object) -> bool:
         return False
-
-
-def _openrouter_config():
-    from cure_system_one.config import resolve_system_one_config
-
-    return resolve_system_one_config(
-        {
-            "enabled": True,
-            "provider": "openrouter",
-            "model": "M1",
-            "api_key_env": "CURE_SYSTEM_ONE_TEST_KEY",  # pragma: allowlist secret
-        }
-    )
-
-
-def test_openrouter_transport_status_taxonomy(monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
-    import urllib.error
-
-    from cure_system_one.providers import ProviderTransportError
-    from cure_system_one.providers import openrouter as openrouter_module
-    from cure_system_one.providers.openrouter import OpenRouterAdapter
-
-    captured: dict[str, object] = {}
-
-    def fake_urlopen(request, timeout=None):
-        captured["url"] = request.full_url
-        captured["data"] = request.data
-        captured["headers"] = dict(request.headers)
-        return _FakeResponse(
-            {"choices": [{"message": {"content": json.dumps({"probability": 0.82})}}]}
-        )
-
-    monkeypatch.setattr(openrouter_module.urllib.request, "urlopen", fake_urlopen)
-
-    raw, latency = OpenRouterAdapter(_openrouter_config()).complete(
-        "noul",
-        {"messages": [{"role": "user", "content": "x"}], "schema": {"type": "object"}},
-        deadline=None,
-    )
-    assert raw == {"probability": 0.82}
-    assert isinstance(latency, float)
-    assert latency >= 0.0
-
-    body = json.loads(bytes(captured["data"]).decode("utf-8"))
-    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
-    assert body["model"] == "M1"
-    assert body["response_format"]["type"] == "json_schema"
-    assert body["response_format"]["json_schema"]["name"] == "noul"
-    assert body["response_format"]["json_schema"]["strict"] is True
-    assert body["response_format"]["json_schema"]["schema"] == {"type": "object"}
-    assert body["provider"] == {"require_parameters": True}
-
-    def raising(code: int):
-        def _urlopen(request, timeout=None):
-            raise urllib.error.HTTPError(request.full_url, code, "err", None, None)
-
-        return _urlopen
-
-    for code in (429, 500, 503):
-        monkeypatch.setattr(openrouter_module.urllib.request, "urlopen", raising(code))
-        with pytest.raises(ProviderTransportError) as transient:
-            OpenRouterAdapter(_openrouter_config()).complete(
-                "noul", {"messages": [], "schema": {}}, deadline=None
-            )
-        assert transient.value.kind == "transient"
-
-    for code in (401, 402, 403):
-        monkeypatch.setattr(openrouter_module.urllib.request, "urlopen", raising(code))
-        with pytest.raises(ProviderTransportError) as auth:
-            OpenRouterAdapter(_openrouter_config()).complete(
-                "noul", {"messages": [], "schema": {}}, deadline=None
-            )
-        assert auth.value.kind == "auth"
 
 
 def _decisions_config(model: str = "typesafe/jev-1.13"):
@@ -320,3 +246,15 @@ def test_decisions_registered_with_defaults() -> None:
     resolved = resolve_system_one_config({"enabled": True})
     assert resolved.provider == "openrouter-decisions"
     assert resolved.model == "typesafe/jev-1.13"
+
+
+def test_openrouter_chat_provider_removed() -> None:
+    from cure_system_one.config import resolve_system_one_config
+    from cure_system_one.errors import SystemOneConfigError
+    from cure_system_one.providers import create_provider, provider_names
+
+    assert set(provider_names()) == {"openrouter-decisions", "local"}
+    with pytest.raises(SystemOneConfigError):
+        create_provider("openrouter", None)
+    with pytest.raises(SystemOneConfigError):
+        resolve_system_one_config({"enabled": True, "provider": "openrouter"})

@@ -54,17 +54,17 @@ def test_system_one_config_check_ok_and_fail(tmp_path: Path) -> None:
     valid = _system_one_checks(
         _runtime(
             tmp_path / "valid",
-            '[system_one]\nenabled = true\nprovider = "openrouter"\nmodel = "M1"',
+            '[system_one]\nenabled = true\nprovider = "openrouter-decisions"\nmodel = "M1"',
         )
     )["system-one-config"]
     assert valid.status == "ok"
-    assert "openrouter" in valid.detail
+    assert "openrouter-decisions" in valid.detail
     assert "M1" in valid.detail
 
     unknown = _system_one_checks(
         _runtime(
             tmp_path / "unknown",
-            '[system_one]\nenabled = true\nprovider = "openrouter"\nfuture_key = 7',
+            '[system_one]\nenabled = true\nprovider = "openrouter-decisions"\nfuture_key = 7',
         )
     )["system-one-config"]
     assert unknown.status == "ok"
@@ -136,8 +136,8 @@ class _FakeResponse:
         return self.status
 
 
-def _openrouter_runtime(tmp_path: Path, **overrides: str) -> cure_runtime.ReviewflowRuntime:
-    lines = ['[system_one]', 'enabled = true', 'provider = "openrouter"']
+def _decisions_runtime(tmp_path: Path, **overrides: str) -> cure_runtime.ReviewflowRuntime:
+    lines = ['[system_one]', 'enabled = true', 'provider = "openrouter-decisions"']
     for key, value in overrides.items():
         lines.append(f'{key} = "{value}"')
     return _runtime(tmp_path, "\n".join(lines))
@@ -171,21 +171,21 @@ def test_system_one_api_key_check(
 
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     calls = _install_urlopen(monkeypatch, _no_probe)
-    unset = _system_one_checks(_openrouter_runtime(tmp_path / "unset"))["system-one-api-key"]
+    unset = _system_one_checks(_decisions_runtime(tmp_path / "unset"))["system-one-api-key"]
     assert unset.status == "fail"
     assert "key unset" in unset.detail
     assert calls == []
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "   ")
     calls = _install_urlopen(monkeypatch, _no_probe)
-    blank = _system_one_checks(_openrouter_runtime(tmp_path / "blank"))["system-one-api-key"]
+    blank = _system_one_checks(_decisions_runtime(tmp_path / "blank"))["system-one-api-key"]
     assert blank.status == "fail"
     assert "key unset" in blank.detail
     assert calls == []
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-key")
     calls = _install_urlopen(monkeypatch, lambda request, *a, **k: _FakeResponse(200))
-    ok = _system_one_checks(_openrouter_runtime(tmp_path / "ok"))["system-one-api-key"]
+    ok = _system_one_checks(_decisions_runtime(tmp_path / "ok"))["system-one-api-key"]
     assert ok.status == "ok"
     assert calls and calls[0].full_url == "https://openrouter.ai/api/v1/key"
     assert calls[0].get_method() == "GET"
@@ -198,7 +198,7 @@ def test_system_one_api_key_check(
 
     for code in (401, 402, 403):
         calls = _install_urlopen(monkeypatch, _http_error(code))
-        rejected = _system_one_checks(_openrouter_runtime(tmp_path / f"auth{code}"))[
+        rejected = _system_one_checks(_decisions_runtime(tmp_path / f"auth{code}"))[
             "system-one-api-key"
         ]
         assert rejected.status == "fail"
@@ -206,7 +206,7 @@ def test_system_one_api_key_check(
 
     for code in (429, 500, 503, 418):
         calls = _install_urlopen(monkeypatch, _http_error(code))
-        warned = _system_one_checks(_openrouter_runtime(tmp_path / f"warn{code}"))[
+        warned = _system_one_checks(_decisions_runtime(tmp_path / f"warn{code}"))[
             "system-one-api-key"
         ]
         assert warned.status == "warn"
@@ -215,14 +215,14 @@ def test_system_one_api_key_check(
         raise urllib.error.URLError("boom")
 
     calls = _install_urlopen(monkeypatch, _network_error)
-    network = _system_one_checks(_openrouter_runtime(tmp_path / "network"))["system-one-api-key"]
+    network = _system_one_checks(_decisions_runtime(tmp_path / "network"))["system-one-api-key"]
     assert network.status == "warn"
 
     def _timeout(*args: object, **kwargs: object):
         raise TimeoutError("timed out")
 
     calls = _install_urlopen(monkeypatch, _timeout)
-    timeout = _system_one_checks(_openrouter_runtime(tmp_path / "timeout"))["system-one-api-key"]
+    timeout = _system_one_checks(_decisions_runtime(tmp_path / "timeout"))["system-one-api-key"]
     assert timeout.status == "warn"
     assert "sk-test-key" not in timeout.detail
 
@@ -311,7 +311,7 @@ def test_doctor_dependent_gating_summary_and_exit(
             urllib.error.HTTPError(request.full_url, 429, "slow down", {}, None)
         ),
     )
-    warn_rc, warned = _run(_openrouter_runtime(tmp_path / "warn"))
+    warn_rc, warned = _run(_decisions_runtime(tmp_path / "warn"))
     by_name = {c["name"]: c for c in warned["checks"]}  # type: ignore[index]
     assert by_name["system-one-api-key"]["status"] == "warn"
     assert warned["summary"]["fail"] == 0  # type: ignore[index]

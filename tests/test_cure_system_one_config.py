@@ -90,7 +90,7 @@ def test_config_inclusive_boundaries_and_frozen_snapshot() -> None:
 
     assert dataclasses.is_dataclass(resolved)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        resolved.provider = "openrouter"  # type: ignore[misc]
+        resolved.provider = "openrouter-decisions"  # type: ignore[misc]
 
     with pytest.raises(SystemOneConfigError):
         resolve_system_one_config({"enabled": True, "timeout_ms": 0})

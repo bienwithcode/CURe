@@ -38,13 +38,6 @@ PROVIDER_FAILURE_KINDS = {
 # very large input cannot fan out an unbounded thread pool.
 MAX_BATCH_FILTER_WORKERS = 8
 
-_OPERATION_INSTRUCTIONS = {
-    "noul": "Return the probability that the claim is supported by the evidence.",
-    "choice": "Select exactly one option and report your confidence.",
-    "score": "Score the subject against the rubric and report your confidence.",
-    "batch_filter": "Return the subset of items that match the criteria, in input order.",
-}
-
 
 def utc_now_iso() -> str:
     """Return the current UTC instant as an ISO-8601 string for degraded records."""
@@ -108,7 +101,7 @@ class SystemOneClient:
         evidence, t2 = self._trim(evidence, self._config.max_evidence_chars)
         context, t3 = self._trim(context, self._config.max_context_chars)
         fields = {"claim": claim, "evidence": evidence, "context": context}
-        payload = self._build_request("noul", fields, _noul_schema())
+        payload = self._build_request("noul", fields)
         validated = self._call("noul", payload, _validate_noul)
         probability = validated["probability"]
         return {
@@ -128,7 +121,7 @@ class SystemOneClient:
         subject, t1 = self._trim(subject, self._config.max_subject_chars)
         context, t2 = self._trim(context, self._config.max_context_chars)
         fields = {"subject": subject, "options": list(options), "context": context}
-        payload = self._build_request("choice", fields, _choice_schema(options))
+        payload = self._build_request("choice", fields)
         validated = self._call(
             "choice", payload, lambda raw: _validate_choice(raw, options)
         )
@@ -151,7 +144,7 @@ class SystemOneClient:
             "rubric": {"min": minimum, "max": maximum},
             "context": context,
         }
-        payload = self._build_request("score", fields, _score_schema(minimum, maximum))
+        payload = self._build_request("score", fields)
         validated = self._call(
             "score", payload, lambda raw: _validate_score(raw, minimum, maximum)
         )
@@ -182,7 +175,7 @@ class SystemOneClient:
 
         def run_chunk(chunk: list[str]) -> list[str]:
             fields = {"criteria": criteria, "context": context, "items": list(chunk)}
-            payload = self._build_request("batch_filter", fields, _batch_schema())
+            payload = self._build_request("batch_filter", fields)
             return self._call(
                 "batch_filter", payload, lambda raw: _validate_batch(raw, chunk)
             )
@@ -268,20 +261,8 @@ class SystemOneClient:
         return value, False
 
     @staticmethod
-    def _build_request(
-        operation: str, fields: dict[str, Any], schema: dict[str, Any]
-    ) -> dict[str, Any]:
-        return {
-            "messages": [
-                {"role": "system", "content": _OPERATION_INSTRUCTIONS.get(operation, "")},
-                {
-                    "role": "user",
-                    "content": "\n".join(f"{key}: {value}" for key, value in fields.items()),
-                },
-            ],
-            "schema": schema,
-            "input": fields,
-        }
+    def _build_request(operation: str, fields: dict[str, Any]) -> dict[str, Any]:
+        return {"operation": operation, "input": fields}
 
 
 # -- structural input contract ---------------------------------------------
@@ -352,51 +333,6 @@ def _require_rubric(rubric: Any) -> tuple[float, float]:
             "Invalid rubric for System 1 score. Expected min <= max."
         )
     return resolved_min, resolved_max
-
-
-# -- schemas ---------------------------------------------------------------
-
-
-def _noul_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {"probability": {"type": "number", "minimum": 0, "maximum": 1}},
-        "required": ["probability"],
-        "additionalProperties": False,
-    }
-
-
-def _choice_schema(options: list[str]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "selected": {"type": "string", "enum": list(options)},
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        },
-        "required": ["selected", "confidence"],
-        "additionalProperties": False,
-    }
-
-
-def _score_schema(minimum: float, maximum: float) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "score": {"type": "number", "minimum": minimum, "maximum": maximum},
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        },
-        "required": ["score", "confidence"],
-        "additionalProperties": False,
-    }
-
-
-def _batch_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {"filtered": {"type": "array", "items": {"type": "string"}}},
-        "required": ["filtered"],
-        "additionalProperties": False,
-    }
 
 
 # -- validators ------------------------------------------------------------

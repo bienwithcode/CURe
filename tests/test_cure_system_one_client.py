@@ -212,7 +212,7 @@ def test_frozen_snapshot_and_chunked_batch_order() -> None:
     )
     client = SystemOneClient.from_snapshot(config, provider=adapter)
 
-    section["provider"] = "openrouter"
+    section["provider"] = "openrouter-decisions"
     section["model"] = "M2"
     for _ in range(3):
         assert client.noul("c", "e")["probability"] == 0.9

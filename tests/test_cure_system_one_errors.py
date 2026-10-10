@@ -15,13 +15,13 @@ def test_error_taxonomy_and_context_fields() -> None:
 
     error = SystemOneError(
         "boom",
-        provider="openrouter",
+        provider="openrouter-decisions",
         operation="noul",
         latency_ms=12.5,
         attempts=2,
     )
     assert isinstance(error, ReviewflowError)
-    assert error.provider == "openrouter"
+    assert error.provider == "openrouter-decisions"
     assert error.operation == "noul"
     assert error.latency_ms == 12.5
     assert error.attempts == 2
