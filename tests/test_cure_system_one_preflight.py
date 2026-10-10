@@ -313,7 +313,7 @@ def test_citation_path_traversal_is_dead(
 
     config = _config()
     repo = _repo(tmp_path, {"src/a.py": "one\ntwo\n"})
-    secret = "SECRET-OUTSIDE-CONTENT"
+    secret = "SECRET-OUTSIDE-CONTENT"  # pragma: allowlist secret
     (tmp_path / "outside.txt").write_text(f"{secret}\n", encoding="utf-8")
     script = {"noul": [{"value": {"probability": 0.9}}] * 4}
     client = _RecordingClient(_build_client(config, script, tmp_path, monkeypatch))

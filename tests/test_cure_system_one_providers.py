@@ -52,7 +52,7 @@ def _openrouter_config():
             "enabled": True,
             "provider": "openrouter",
             "model": "M1",
-            "api_key_env": "CURE_SYSTEM_ONE_TEST_KEY",
+            "api_key_env": "CURE_SYSTEM_ONE_TEST_KEY",  # pragma: allowlist secret
         }
     )
 

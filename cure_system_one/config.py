@@ -14,7 +14,7 @@ from cure_system_one.errors import SystemOneConfigError
 
 DEFAULT_PROVIDER = "openrouter"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
-DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
+DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"  # pragma: allowlist secret
 DEFAULT_TIMEOUT_MS = 2500
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_FINDING_ACCEPTANCE_PROBABILITY = 0.75
