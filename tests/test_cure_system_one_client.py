@@ -9,6 +9,8 @@ import pytest
 class _FakeAdapter:
     """Thread-safe provider double that delegates to a handler callable."""
 
+    supported_operations = frozenset({"noul", "choice", "score", "batch_filter"})
+
     def __init__(self, handler: Callable[[str, dict], tuple[dict, float]]) -> None:
         self._handler = handler
         self._lock = threading.Lock()
@@ -359,3 +361,34 @@ def test_batch_filter_thread_pool_is_capped(monkeypatch: pytest.MonkeyPatch) -> 
     assert result["filtered"] == items
     assert client_module.MAX_BATCH_FILTER_WORKERS == 8
     assert captured == [client_module.MAX_BATCH_FILTER_WORKERS]
+
+
+class _CapabilityAdapter:
+    """Provider double that declares a restricted capability set."""
+
+    def __init__(self, supported: frozenset[str]) -> None:
+        self.supported_operations = supported
+        self.calls: list[tuple[str, dict]] = []
+
+    def complete(
+        self, operation: str, request_payload: dict, *, deadline: float | None = None
+    ) -> tuple[dict, float]:
+        self.calls.append((operation, request_payload))
+        return {"filtered": []}, 1.0
+
+
+def test_batch_filter_rejected_when_adapter_omits_it() -> None:
+    from cure_system_one.client import SystemOneClient
+    from cure_system_one.config import resolve_system_one_config
+    from cure_system_one.errors import SystemOneConfigError
+
+    config = resolve_system_one_config(
+        {"enabled": True, "provider": "local", "model": "M1"}
+    )
+    adapter = _CapabilityAdapter(frozenset({"noul", "choice", "score"}))
+    client = SystemOneClient(config, adapter)
+
+    with pytest.raises(SystemOneConfigError) as error:
+        client.batch_filter(["a"])
+    assert "batch_filter" in str(error.value)
+    assert adapter.calls == []

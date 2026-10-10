@@ -386,3 +386,10 @@ def test_chunked_batch_one_outcome_per_chunk(
     result = client.batch_filter(items)
     expected = ["item-0"] + items[100:200] + items[200:250]
     assert result["filtered"] == expected
+
+
+def test_local_declares_all_supported_operations() -> None:
+    provider = _provider()
+    assert provider.supported_operations == frozenset(
+        {"noul", "choice", "score", "batch_filter"}
+    )

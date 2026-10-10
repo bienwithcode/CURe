@@ -38,6 +38,8 @@ _VALID_FAULTS = frozenset(_FAULT_KINDS) | {"schema_violation"}
 class LocalProvider:
     """Deterministic provider driven by canned defaults and an optional script."""
 
+    supported_operations = frozenset(_VALID_OPERATIONS)
+
     def __init__(self, config: Any) -> None:
         self._config = config
         self._lock = threading.Lock()

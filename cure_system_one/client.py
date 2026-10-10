@@ -164,6 +164,12 @@ class SystemOneClient:
     def batch_filter(
         self, items: Any, *, criteria: Any = "", context: Any = ""
     ) -> dict[str, Any]:
+        supported = getattr(self._provider, "supported_operations", None)
+        if supported is not None and "batch_filter" not in supported:
+            raise SystemOneConfigError(
+                f"System 1 provider {self._config.provider!r} does not support "
+                "operation 'batch_filter'."
+            )
         items = _require_items(items)
         if not items:
             return {"filtered": [], "truncated": False}

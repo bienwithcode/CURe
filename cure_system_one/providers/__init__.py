@@ -35,7 +35,14 @@ class ProviderTransportError(Exception):
 
 @runtime_checkable
 class ProviderAdapter(Protocol):
-    """Narrow transport seam: one provider call, no validation, no retry."""
+    """Narrow transport seam: one provider call, no validation, no retry.
+
+    ``supported_operations`` declares which primitives the adapter serves so
+    the client can reject an unsupported operation with zero provider calls
+    without knowing the provider by name.
+    """
+
+    supported_operations: frozenset[str]
 
     def complete(
         self,
