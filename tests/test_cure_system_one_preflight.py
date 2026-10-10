@@ -304,3 +304,68 @@ def test_matrix_serialization_verbatim_and_cap(
     )
     assert rerun.artifact_path == result.artifact_path
     assert Path(rerun.artifact_path).read_bytes() == first_bytes
+
+
+def test_citation_path_traversal_is_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cure_system_one.preflight import run_preflight
+
+    config = _config()
+    repo = _repo(tmp_path, {"src/a.py": "one\ntwo\n"})
+    secret = "SECRET-OUTSIDE-CONTENT"
+    (tmp_path / "outside.txt").write_text(f"{secret}\n", encoding="utf-8")
+    script = {"noul": [{"value": {"probability": 0.9}}] * 4}
+    client = _RecordingClient(_build_client(config, script, tmp_path, monkeypatch))
+    clusters = [
+        _cluster("c1", "- [High] traversal. Sources: `../outside.txt:1`"),
+        _cluster("c2", "- [High] nested. Sources: `src/../../outside.txt:1`"),
+        _cluster("c3", "- [High] fine. Sources: `src/a.py:1`"),
+    ]
+    result = run_preflight(clusters, client=client, config=config, repo_dir=repo)
+
+    # Citations escaping the sandbox are dead, never read, never promoted.
+    assert result.summary is not None
+    assert result.summary.mechanical_excluded == 2
+    assert result.summary.matrix_rows == 1
+    assert [row.cluster_id for row in result.rows] == ["c3"]
+    assert {entry.reason for entry in result.exclusions} == {"citation_dead"}
+    assert all(secret not in claim and secret not in evidence for claim, evidence in client.noul_calls)
+    for row in result.rows:
+        for citation in row.citations:
+            assert secret not in citation.snippet
+
+
+def test_resolved_citation_cache_reuses_file_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cure_system_one.preflight import run_preflight
+
+    config = _config()
+    repo = _repo(tmp_path, {"src/a.py": "alpha\nbeta\ngamma\n"})
+    script = {
+        "noul": [
+            {"value": {"probability": 0.9}},
+            {"value": {"probability": 0.9}},
+        ]
+    }
+    client = _RecordingClient(_build_client(config, script, tmp_path, monkeypatch))
+    reads = {"count": 0}
+    real_read_text = Path.read_text
+
+    def counting_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.name == "a.py":
+            reads["count"] += 1
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    clusters = [
+        _cluster("c1", "- [High] first. Sources: `src/a.py:1`"),
+        _cluster("c2", "- [High] second. Sources: `src/a.py:2`"),
+    ]
+    result = run_preflight(clusters, client=client, config=config, repo_dir=repo)
+
+    assert result.summary is not None
+    assert result.summary.matrix_rows == 2
+    # Two citations to the same file read it once, thanks to the cache.
+    assert reads["count"] == 1

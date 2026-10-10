@@ -102,3 +102,25 @@ def test_evidence_matrix_prompt_vars_off_and_on(tmp_path) -> None:
     assert paths[0] == f"- `{matrix_path}`"
     assert paths[1] == "- `step-02.md`"
     assert raw not in on["STEP_OUTPUT_PATHS"]
+
+
+def test_evidence_matrix_prompt_vars_missing_or_unreadable_artifact(tmp_path) -> None:
+    from cure_system_one.pipeline import SynthInputs
+    from cure_system_one.prompt_vars import evidence_matrix_prompt_vars
+
+    raw = "- `step-00.md`"
+
+    # A matrix path that no longer exists falls back to the off values.
+    missing = SynthInputs(matrix_path=str(tmp_path / "gone.json"), matrix_rows=1)
+    result = evidence_matrix_prompt_vars(missing, raw_step_paths_text=raw)
+    assert result["EVIDENCE_MATRIX"] == ""
+    assert result["EVIDENCE_MATRIX_GUIDANCE"] == ""
+    assert result["STEP_OUTPUT_PATHS"] == raw
+
+    # A path that is a directory (unreadable as a file) also falls back.
+    directory = tmp_path / "as-dir"
+    directory.mkdir()
+    unreadable = SynthInputs(matrix_path=str(directory), matrix_rows=1)
+    result = evidence_matrix_prompt_vars(unreadable, raw_step_paths_text=raw)
+    assert result["EVIDENCE_MATRIX"] == ""
+    assert result["STEP_OUTPUT_PATHS"] == raw

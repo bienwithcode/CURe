@@ -94,3 +94,16 @@ def test_config_inclusive_boundaries_and_frozen_snapshot() -> None:
 
     with pytest.raises(SystemOneConfigError):
         resolve_system_one_config({"enabled": True, "timeout_ms": 0})
+
+
+def test_extract_system_one_section_is_pure_and_tolerant() -> None:
+    from cure_system_one.config import extract_system_one_section
+
+    section = {"enabled": True, "provider": "local"}
+    # A parsed mapping yields its [system_one] table verbatim.
+    assert extract_system_one_section({"system_one": section}) is section
+    # Absent section, absent key, and non-mapping config all resolve to None.
+    assert extract_system_one_section({}) is None
+    assert extract_system_one_section({"other": 1}) is None
+    assert extract_system_one_section(None) is None
+    assert extract_system_one_section("not-a-table") is None

@@ -16,7 +16,9 @@ from typing import Any
 from cure_system_one.providers import ProviderTransportError
 
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
-_AUTH_STATUSES = frozenset({401, 402, 403})
+# HTTP statuses that mean the OpenRouter credential was rejected. Shared with
+# the runtime doctor probe so auth classification cannot drift between them.
+OPENROUTER_AUTH_STATUSES = frozenset({401, 402, 403})
 
 
 class OpenRouterAdapter:
@@ -104,7 +106,7 @@ class OpenRouterAdapter:
 
     @staticmethod
     def _classify_status(status_code: int) -> str:
-        return "auth" if status_code in _AUTH_STATUSES else "transient"
+        return "auth" if status_code in OPENROUTER_AUTH_STATUSES else "transient"
 
     def _api_key(self) -> str:
         return os.environ.get(self._config.api_key_env, "").strip()

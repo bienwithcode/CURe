@@ -164,7 +164,7 @@ def test_empty_matrix_terminal(tmp_path: Path, monkeypatch: Any) -> None:
         cure,
         "resolve_synth_inputs",
         lambda artifacts, **kwargs: SynthInputs(
-            skipped=False, matrix_rows=0, matrix_path=None
+            skipped=False, matrix_rows=0, matrix_path=None, findings_in=2
         ),
     )
 
@@ -196,6 +196,60 @@ def test_empty_matrix_terminal(tmp_path: Path, monkeypatch: Any) -> None:
     assert meta["multipass"]["status"] == "step_failed"
     assert playbook["calls"] == 1
     assert playbook["kwargs"]["resume_from"] == "steps"
+
+
+def test_zero_findings_skips_terminal_and_proceeds(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import cure
+    from cure_system_one.pipeline import SynthInputs
+
+    # A finding-free review reports zero findings in (not an all-excluded
+    # matrix); the wrapper must hand the raw artifacts to synthesis normally.
+    outputs = _step_outputs(tmp_path, count=2)
+    monkeypatch.setattr(
+        cure, "_prepare_synth_inputs", lambda **kwargs: (list(outputs), "skipped")
+    )
+    monkeypatch.setattr(
+        cure,
+        "resolve_synth_inputs",
+        lambda artifacts, **kwargs: SynthInputs(
+            skipped=False, matrix_rows=0, matrix_path=None, findings_in=0
+        ),
+    )
+
+    playbook: dict[str, Any] = {"calls": 0}
+
+    def fake_playbook(**kwargs: Any) -> None:
+        playbook["calls"] += 1
+
+    monkeypatch.setattr(cure, "_emit_multipass_grounding_failure_playbook", fake_playbook)
+
+    config_path = _write_config(
+        tmp_path, '[system_one]\nenabled = true\nprovider = "local"\n'
+    )
+    meta: dict[str, Any] = {}
+    synth, skipped, so_ctx = cure._prepare_synth_inputs_with_system_one(
+        meta=meta,
+        step_entries=[],
+        session_id="session-zero",
+        session_dir=tmp_path,
+        work_dir=tmp_path,
+        review_md_path=tmp_path / "review.md",
+        repo_dir=tmp_path,
+        config_path=config_path,
+    )
+
+    # Synthesis runs on the raw artifacts; no terminal, no error status.
+    assert synth == outputs
+    assert skipped == "skipped"
+    assert so_ctx is not None
+    assert so_ctx.skipped is False
+    assert so_ctx.matrix_rows == 0
+    assert so_ctx.findings_in == 0
+    assert meta.get("status") != "error"
+    assert meta.get("multipass", {}).get("status") != "step_failed"
+    assert playbook["calls"] == 0
 
 
 def test_lenient_runtime_and_review_completion(
@@ -410,26 +464,24 @@ def _replay_prose() -> str:
     return "\n".join(f"- prose line {index}: {sentence}" for index in range(40))
 
 
-def _replay_step_artifact(step_index: int, findings: list[str]) -> str:
-    return "\n".join(
-        [
-            f"### Step Result: {step_index:02d} - Step {step_index}",
-            "**Focus**: replay corpus",
-            "",
-            "### Steps taken",
-            _replay_prose(),
-            "",
-            "### Hypothesis Ledger",
-            "- suspicious surface: src/app.py; tentative issue: replay; next proof target: line 2",
-            "",
-            "### Findings",
-            *findings,
-            "",
-            "### Suggested actions",
-            "- none",
-            "",
-        ]
-    )
+def _replay_step_artifact(
+    step_index: int, findings: list[str], *, include_findings: bool = True
+) -> str:
+    lines = [
+        f"### Step Result: {step_index:02d} - Step {step_index}",
+        "**Focus**: replay corpus",
+        "",
+        "### Steps taken",
+        _replay_prose(),
+        "",
+        "### Hypothesis Ledger",
+        "- suspicious surface: src/app.py; tentative issue: replay; next proof target: line 2",
+        "",
+    ]
+    if include_findings:
+        lines.extend(["### Findings", *findings, ""])
+    lines.extend(["### Suggested actions", "- none", ""])
+    return "\n".join(lines)
 
 
 def _replay_corpus() -> dict[str, str]:
@@ -493,13 +545,29 @@ def _synth_run_entries(meta: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _run_replay_flow(root: Path, *, flag_on: bool) -> dict[str, Any]:
+def _zero_findings_corpus() -> dict[str, str]:
+    """Step artifacts that carry no ``### Findings`` section at all."""
+    return {
+        "review.step-01.md": _replay_step_artifact(1, [], include_findings=False),
+        "review.step-02.md": _replay_step_artifact(2, [], include_findings=False),
+    }
+
+
+def _run_replay_flow(
+    root: Path,
+    *,
+    flag_on: bool,
+    corpus: dict[str, str] | None = None,
+    grounding_mode: str = "strict",
+) -> dict[str, Any]:
     """Drive the multipass review harness over the replay corpus.
 
     The corpus carries one mechanically-dead citation and one unsupported
     citation. The mocked synthesis reads only the effective
     ``STEP_OUTPUT_PATHS``, so a flag-on run synthesizes from the verified matrix
-    while a flag-off run synthesizes from the raw step artifacts.
+    while a flag-off run synthesizes from the raw step artifacts. ``corpus``
+    overrides the default replay artifacts (e.g. for a finding-free review) and
+    ``grounding_mode`` selects the multipass grounding mode.
     """
     import cure
     from cure_pr_context.corpus import estimated_tokens
@@ -510,7 +578,7 @@ def _run_replay_flow(root: Path, *, flag_on: bool) -> dict[str, Any]:
 
     case = CodexToolProofFlowTests()
     grounding = MultipassGroundingRuntimeTests()
-    corpus = _replay_corpus()
+    corpus = corpus if corpus is not None else _replay_corpus()
     synth_state: dict[str, Any] = {"calls": 0, "effective_paths": [], "usage": {}}
 
     def clean_markdown() -> str:
@@ -583,7 +651,7 @@ def _run_replay_flow(root: Path, *, flag_on: bool) -> dict[str, Any]:
             "enabled": True,
             "max_steps": 20,
             "step_workers": 1,
-            "grounding_mode": "strict",
+            "grounding_mode": grounding_mode,
         },
         flow_patch=flow_patch,
     )
@@ -611,6 +679,41 @@ def replay_runs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         off = _run_replay_flow(tmp_path_factory.mktemp("replay-off"), flag_on=False)
         on = _run_replay_flow(tmp_path_factory.mktemp("replay-on"), flag_on=True)
     return {"off": off, "on": on}
+
+
+@pytest.fixture(scope="module")
+def zero_findings_run(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    script_path = (
+        tmp_path_factory.mktemp("zero-findings-script") / "system_one_script.json"
+    )
+    script_path.write_text(
+        json.dumps({"noul": [{"value": {"probability": 0.9}}] * 20}),
+        encoding="utf-8",
+    )
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv("CURE_SYSTEM_ONE_SCRIPT", str(script_path))
+        return _run_replay_flow(
+            tmp_path_factory.mktemp("zero-findings"),
+            flag_on=True,
+            corpus=_zero_findings_corpus(),
+            grounding_mode="off",
+        )
+
+
+def test_zero_findings_full_flow_runs_synthesis(
+    zero_findings_run: dict[str, Any],
+) -> None:
+    # A flag-on review with no findings completes without the empty-matrix
+    # terminal and still reaches synthesis.
+    meta = zero_findings_run["meta"]
+    assert meta.get("status") != "error"
+    assert meta.get("multipass", {}).get("status") != "step_failed"
+    system_one = meta["multipass"]["system_one"]
+    assert system_one["preflight"]["summary"] is None
+    assert system_one["matrix_path"] is None
+    synth = _synth_run_entries(meta)
+    assert synth, "synthesis must run on a finding-free review"
+    assert (zero_findings_run["session_dir"] / "review.md").is_file()
 
 
 def test_grounding_attempts_empty_on_known_bad_corpus(

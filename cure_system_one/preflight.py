@@ -13,7 +13,7 @@ import json
 import os
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -22,7 +22,11 @@ from cure_citations import (
     has_incomplete_sources,
     trailing_sources_suffix,
 )
-from cure_system_one.client import passes_grounding_confidence
+from cure_system_one.client import (
+    PROVIDER_FAILURE_KINDS,
+    passes_grounding_confidence,
+    utc_now_iso,
+)
 from cure_system_one.config import SystemOneConfig
 from cure_system_one.dedup import DedupCluster
 from cure_system_one.errors import (
@@ -42,12 +46,6 @@ CITATION_SUPPORTED = "citation_supported"
 DEFAULT_MATRIX_FILENAME = "system-one-evidence-matrix.json"
 
 _PREVIEW_LIMIT = 160
-
-_PROVIDER_FAILURE_KINDS = {
-    SystemOneTransientError: "transient",
-    SystemOneProviderAuthError: "auth",
-    SystemOneSchemaViolationError: "schema_violation",
-}
 
 
 @dataclass(frozen=True)
@@ -140,12 +138,19 @@ class PreflightSummary:
 
 @dataclass(frozen=True)
 class PreflightDegraded:
-    """One degraded record explaining why the whole stage was skipped."""
+    """One degraded record explaining why the whole stage was skipped.
+
+    ``stage`` names the stage that degraded and ``recorded_at`` carries the
+    ISO-8601 UTC instant it was created, matching the additive session-meta
+    degraded-entry contract.
+    """
 
     cause: str
     kind: str
     provider: str
     operation: str | None = None
+    stage: str = "preflight"
+    recorded_at: str = field(default_factory=utc_now_iso)
 
 
 @dataclass(frozen=True)
@@ -184,6 +189,8 @@ class PreflightResult:
             "kind": degraded.kind,
             "provider": degraded.provider,
             "operation": degraded.operation,
+            "stage": degraded.stage,
+            "recorded_at": degraded.recorded_at,
         }
 
     def to_meta(self) -> dict[str, Any]:
@@ -224,6 +231,7 @@ def run_preflight(
     effective_budget = config.preflight_budget_ms if budget_ms is None else budget_ms
     started = clock()
     root = Path(repo_dir)
+    content_cache: dict[str, list[str] | None] = {}
     rows: list[MatrixRow] = []
     exclusions: list[FindingExclusion] = []
     mechanical_excluded = 0
@@ -234,7 +242,7 @@ def run_preflight(
         for cluster in clusters:
             card = cluster.representative
             candidates = _mechanical_citations(
-                card.text, root, config.max_evidence_chars
+                card.text, root, config.max_evidence_chars, cache=content_cache
             )
             if not candidates:
                 mechanical_excluded += 1
@@ -292,7 +300,7 @@ def run_preflight(
     ) as exc:
         return _skip(
             cause="provider_failure",
-            kind=_PROVIDER_FAILURE_KINDS[type(exc)],
+            kind=PROVIDER_FAILURE_KINDS[type(exc)],
             provider=exc.provider or config.provider,
             operation=exc.operation,
         )
@@ -366,7 +374,10 @@ def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
     """Write ``data`` as canonical JSON via an atomic replace.
 
     Keys are sorted and the encoding is fixed, so re-running the stage over
-    byte-identical inputs produces a byte-identical artifact.
+    byte-identical inputs produces a byte-identical artifact. This intentionally
+    duplicates ``meta.write_json`` rather than importing it: ``cure_system_one``
+    is a leaf package that may import only ``cure_errors`` and ``cure_citations``,
+    so it must not reach into :mod:`meta`.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
@@ -393,13 +404,19 @@ def _preview_of(text: str) -> str:
 
 
 def _mechanical_citations(
-    text: str, root: Path, cap: int
+    text: str,
+    root: Path,
+    cap: int,
+    *,
+    cache: dict[str, list[str] | None] | None = None,
 ) -> list[_Candidate]:
     """Return the mechanically-valid citations, or an empty list when dead.
 
     An empty result covers every mechanical failure: a missing ``Sources:``
     suffix, an incomplete or unparseable citation, a missing/empty/directory
-    path, a line outside ``[1, file_line_count]``, and a blank cited line.
+    path, a line outside ``[1, file_line_count]``, a blank cited line, and a
+    citation that escapes ``root``. ``cache`` optionally shares resolved file
+    contents across citations within one run.
     """
     suffix = trailing_sources_suffix(text)
     if not suffix:
@@ -412,7 +429,7 @@ def _mechanical_citations(
     candidates: list[_Candidate] = []
     for match in matches:
         candidate = _resolve_citation(
-            root, match.group(1), int(match.group(2)), cap
+            root, match.group(1), int(match.group(2)), cap, cache=cache
         )
         if candidate is None:
             return []
@@ -421,16 +438,42 @@ def _mechanical_citations(
 
 
 def _resolve_citation(
-    root: Path, relative: str, line: int, cap: int
+    root: Path,
+    relative: str,
+    line: int,
+    cap: int,
+    *,
+    cache: dict[str, list[str] | None] | None = None,
 ) -> _Candidate | None:
-    target = root / relative
+    """Resolve one citation, rejecting anything outside ``root``.
+
+    The root is resolved once and the citation target must stay inside it after
+    symlink resolution, so ``../`` traversal and symlinks pointing out of the
+    sandbox are dead citations rather than reads of external files. Resolved
+    file contents are optionally cached so repeated citations do not re-read.
+    """
     try:
-        if not target.is_file():
-            return None
-        content = target.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError, ValueError):
+        resolved_root = root.resolve()
+        target = (root / relative).resolve()
+    except (OSError, ValueError):
         return None
-    lines = content.splitlines()
+    if not target.is_relative_to(resolved_root):
+        return None
+    cache_key = str(target)
+    if cache is not None and cache_key in cache:
+        lines = cache[cache_key]
+    else:
+        try:
+            if target.is_file():
+                lines = target.read_text(encoding="utf-8").splitlines()
+            else:
+                lines = None
+        except (OSError, UnicodeDecodeError, ValueError):
+            lines = None
+        if cache is not None:
+            cache[cache_key] = lines
+    if lines is None:
+        return None
     if line < 1 or line > len(lines):
         return None
     snippet = lines[line - 1]

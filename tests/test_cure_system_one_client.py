@@ -319,3 +319,43 @@ def test_client_core_integration() -> None:
         if operation == "batch_filter"
     ]
     assert sorted(batch_chunks) == [("i0", "i1"), ("i2",)]
+
+
+def test_batch_filter_thread_pool_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    import cure_system_one.client as client_module
+
+    captured: list[int | None] = []
+
+    class _FakeFuture:
+        def __init__(self, fn: Callable[..., Any], args: tuple[Any, ...]) -> None:
+            self._fn = fn
+            self._args = args
+
+        def result(self) -> Any:
+            return self._fn(*self._args)
+
+    class _FakeExecutor:
+        def __init__(self, max_workers: int | None = None) -> None:
+            captured.append(max_workers)
+
+        def __enter__(self) -> "_FakeExecutor":
+            return self
+
+        def __exit__(self, *args: Any) -> bool:
+            return False
+
+        def submit(self, fn: Callable[..., Any], *args: Any) -> _FakeFuture:
+            return _FakeFuture(fn, args)
+
+    monkeypatch.setattr(client_module, "ThreadPoolExecutor", _FakeExecutor)
+
+    def handler(operation: str, request_payload: dict) -> tuple[dict, float]:
+        return {"filtered": list(request_payload["input"]["items"])}, 1.0
+
+    client, _, _ = _make_client(handler, batch_chunk_size=1)
+    items = [f"i{index:02d}" for index in range(20)]
+    result = client.batch_filter(items)
+
+    assert result["filtered"] == items
+    assert client_module.MAX_BATCH_FILTER_WORKERS == 8
+    assert captured == [client_module.MAX_BATCH_FILTER_WORKERS]

@@ -55,6 +55,18 @@ class SystemOneConfig:
         return cls(enabled=False)
 
 
+def extract_system_one_section(raw_config: Any) -> Any:
+    """Return the raw ``system_one`` table from an already-parsed config map.
+
+    Pure and I/O-free: a non-mapping config or an absent section resolves to
+    ``None`` so callers can degrade the System 1 path to absent. Reading the
+    config file is the caller's responsibility.
+    """
+    if not isinstance(raw_config, dict):
+        return None
+    return raw_config.get("system_one")
+
+
 def resolve_system_one_config(raw_section: Any) -> SystemOneConfig:
     """Resolve ``[system_one]`` into a frozen snapshot.
 

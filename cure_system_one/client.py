@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from cure_system_one.config import SystemOneConfig
@@ -25,12 +26,29 @@ from cure_system_one.providers import (
     create_provider,
 )
 
+# The single shared mapping from public provider errors onto degraded ``kind``
+# labels, consumed by both dedup and pre-flight so the taxonomy cannot drift.
+PROVIDER_FAILURE_KINDS = {
+    SystemOneTransientError: "transient",
+    SystemOneProviderAuthError: "auth",
+    SystemOneSchemaViolationError: "schema_violation",
+}
+
+# Upper bound on concurrent per-chunk provider calls in ``batch_filter`` so a
+# very large input cannot fan out an unbounded thread pool.
+MAX_BATCH_FILTER_WORKERS = 8
+
 _OPERATION_INSTRUCTIONS = {
     "noul": "Return the probability that the claim is supported by the evidence.",
     "choice": "Select exactly one option and report your confidence.",
     "score": "Score the subject against the rubric and report your confidence.",
     "batch_filter": "Return the subset of items that match the criteria, in input order.",
 }
+
+
+def utc_now_iso() -> str:
+    """Return the current UTC instant as an ISO-8601 string for degraded records."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 def is_number(value: Any) -> bool:
@@ -166,7 +184,9 @@ class SystemOneClient:
         if len(chunks) == 1:
             chunk_results = [run_chunk(chunks[0])]
         else:
-            with ThreadPoolExecutor(max_workers=len(chunks)) as executor:
+            with ThreadPoolExecutor(
+                max_workers=min(len(chunks), MAX_BATCH_FILTER_WORKERS)
+            ) as executor:
                 futures = [executor.submit(run_chunk, chunk) for chunk in chunks]
                 chunk_results = [future.result() for future in futures]
         filtered = [item for chunk_result in chunk_results for item in chunk_result]

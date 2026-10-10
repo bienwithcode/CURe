@@ -175,6 +175,47 @@ def test_pipeline_empty_matrix_signal(
     assert not list(session_dir.glob("*.json"))
 
 
+def test_pipeline_zero_findings_skips_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cure_system_one import pipeline
+    from cure_system_one.dedup import StepArtifact
+    from cure_system_one.pipeline import resolve_synth_inputs
+
+    # A finding-free review must not run pre-flight: the stage runs only when
+    # dedup produced clusters.
+    calls = {"preflight": 0}
+
+    def counting_preflight(*args: Any, **kwargs: Any) -> Any:
+        calls["preflight"] += 1
+        raise AssertionError("pre-flight must not run without clusters")
+
+    monkeypatch.setattr(pipeline, "run_preflight", counting_preflight)
+
+    config = _config()
+    client = _client(config, None, tmp_path, monkeypatch)
+    artifact = StepArtifact(
+        step_index=0,
+        text="### Findings\n\n### Suggested actions\n- none\n",
+        path="step-00.md",
+    )
+    result = resolve_synth_inputs(
+        [artifact],
+        client=client,
+        config=config,
+        repo_dir=_repo(tmp_path, {}),
+        session_dir=tmp_path / "zero",
+    )
+
+    assert result.skipped is False
+    assert result.matrix_rows == 0
+    assert result.findings_in == 0
+    assert result.matrix_path is None
+    assert result.preflight_summary is None
+    assert result.degraded == ()
+    assert calls["preflight"] == 0
+
+
 def test_pipeline_meta_and_passthrough_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -345,14 +345,20 @@ def test_meta_summary_and_degraded_records(
     client = _RecordingClient(_build_client(config, failing, tmp_path, monkeypatch))
     skipped = run_dedup([_artifact(0, "- [High] a")], client=client, config=config)
     assert skipped.summary is None
-    assert skipped.degraded_record() == {
+    record = skipped.degraded_record()
+    assert record is not None
+    assert {key: record[key] for key in ("cause", "kind", "provider", "operation", "stage")} == {
         "cause": "provider_failure",
         "kind": "transient",
         "provider": "local",
         "operation": "choice",
+        "stage": "dedup",
     }
+    # ``recorded_at`` is captured when the stage degrades, in ISO-8601 UTC.
+    assert record["recorded_at"] == skipped.degraded.recorded_at
+    assert record["recorded_at"].endswith("+00:00")
     assert skipped.to_meta()["summary"] is None
-    assert skipped.to_meta()["degraded"] == skipped.degraded_record()
+    assert skipped.to_meta()["degraded"] == record
 
 
 def test_replay_corpus_clusters(

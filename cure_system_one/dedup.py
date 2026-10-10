@@ -8,11 +8,15 @@ content, not their arrival order.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
 from cure_system_one.cards import FindingCard, parse_findings
-from cure_system_one.client import passes_finding_acceptance
+from cure_system_one.client import (
+    PROVIDER_FAILURE_KINDS,
+    passes_finding_acceptance,
+    utc_now_iso,
+)
 from cure_system_one.config import SystemOneConfig
 from cure_system_one.errors import (
     SystemOneConfigError,
@@ -21,12 +25,6 @@ from cure_system_one.errors import (
     SystemOneSchemaViolationError,
     SystemOneTransientError,
 )
-
-_PROVIDER_FAILURE_KINDS = {
-    SystemOneTransientError: "transient",
-    SystemOneProviderAuthError: "auth",
-    SystemOneSchemaViolationError: "schema_violation",
-}
 
 
 @dataclass(frozen=True)
@@ -66,12 +64,19 @@ class DedupCluster:
 
 @dataclass(frozen=True)
 class DedupDegraded:
-    """One degraded record explaining why the whole stage was skipped."""
+    """One degraded record explaining why the whole stage was skipped.
+
+    ``stage`` names the stage that degraded and ``recorded_at`` carries the
+    ISO-8601 UTC instant it was created, matching the additive session-meta
+    degraded-entry contract.
+    """
 
     cause: str
     kind: str
     provider: str
     operation: str | None = None
+    stage: str = "dedup"
+    recorded_at: str = field(default_factory=utc_now_iso)
 
 
 @dataclass(frozen=True)
@@ -151,6 +156,8 @@ class DedupResult:
             "kind": degraded.kind,
             "provider": degraded.provider,
             "operation": degraded.operation,
+            "stage": degraded.stage,
+            "recorded_at": degraded.recorded_at,
         }
 
     def to_meta(self) -> dict[str, Any]:
@@ -251,7 +258,7 @@ def run_dedup(
             passthrough=tuple(passthrough),
             degraded=DedupDegraded(
                 cause="provider_failure",
-                kind=_PROVIDER_FAILURE_KINDS[type(exc)],
+                kind=PROVIDER_FAILURE_KINDS[type(exc)],
                 provider=exc.provider or config.provider,
                 operation=exc.operation,
             ),

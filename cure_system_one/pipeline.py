@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from cure_system_one.client import utc_now_iso
 from cure_system_one.config import SystemOneConfig
 from cure_system_one.dedup import StepArtifact, run_dedup
 from cure_system_one.preflight import (
@@ -34,6 +35,7 @@ class SynthInputs:
     passthrough_paths: tuple[str, ...] = ()
     matrix_path: str | None = None
     matrix_rows: int = 0
+    findings_in: int = 0
     preflight_summary: dict[str, Any] | None = None
     exclusions: tuple[FindingExclusion, ...] = ()
     degraded: tuple[dict[str, Any], ...] = ()
@@ -87,6 +89,7 @@ def resolve_synth_inputs(
         return SynthInputs(
             matrix_path=None,
             matrix_rows=0,
+            findings_in=0,
             preflight_summary=None,
             exclusions=(),
             degraded=(dedup_record, _mirror_degraded(dedup_record, config)),
@@ -98,6 +101,24 @@ def resolve_synth_inputs(
         artifact.path or f"step-{artifact.step_index}"
         for artifact in dedup_result.passthrough
     )
+    findings_in = dedup_result.summary.findings_in if dedup_result.summary else 0
+
+    # The stage runs only when dedup produced clusters. A finding-free review
+    # proceeds to synthesis on the raw artifacts; it is not an all-excluded
+    # matrix and must never trigger the empty-matrix terminal.
+    if not dedup_result.clusters:
+        return SynthInputs(
+            passthrough_paths=passthrough_paths,
+            matrix_path=None,
+            matrix_rows=0,
+            findings_in=findings_in,
+            preflight_summary=None,
+            exclusions=(),
+            degraded=(),
+            skipped=False,
+            dedup=dedup_result.to_meta(),
+        )
+
     preflight_result = run_preflight(
         dedup_result.clusters,
         client=client,
@@ -114,6 +135,7 @@ def resolve_synth_inputs(
             passthrough_paths=passthrough_paths,
             matrix_path=None,
             matrix_rows=0,
+            findings_in=findings_in,
             preflight_summary=None,
             exclusions=(),
             degraded=(preflight_record,),
@@ -125,6 +147,7 @@ def resolve_synth_inputs(
         passthrough_paths=passthrough_paths,
         matrix_path=preflight_result.artifact_path,
         matrix_rows=len(preflight_result.rows),
+        findings_in=findings_in,
         preflight_summary=preflight_result.summary_record(),
         exclusions=preflight_result.exclusions,
         degraded=(),
@@ -142,4 +165,6 @@ def _mirror_degraded(
         "kind": dedup_record.get("kind"),
         "provider": dedup_record.get("provider") or config.provider,
         "operation": None,
+        "stage": "preflight",
+        "recorded_at": utc_now_iso(),
     }

@@ -29,8 +29,10 @@ from cure_system_one import (
     SystemOneConfigError,
     SystemOneError,
     create_provider,
+    extract_system_one_section,
     resolve_system_one_config,
 )
+from cure_system_one.providers.openrouter import OPENROUTER_AUTH_STATUSES
 from paths import (
     ReviewflowPaths,
     default_cache_root,
@@ -51,7 +53,6 @@ CLI_LLM_PROVIDERS = ("codex",)
 LLM_RESUME_PROVIDERS = ("codex",)
 _SYSTEM_ONE_API_KEY_PROBE_URL = "https://openrouter.ai/api/v1/key"
 _SYSTEM_ONE_DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"
-_SYSTEM_ONE_API_KEY_AUTH_STATUSES = frozenset({401, 402, 403})
 DEFAULT_LEGACY_CODEX_PRESET = "legacy_codex"
 DEFAULT_IMPLICIT_CODEX_PRESET = "codex-cli"
 IMPLICIT_CODEX_PRESET_SOURCE = "implicit_codex_cli"
@@ -3261,9 +3262,7 @@ def _doctor_system_one_section(runtime: ReviewflowRuntime) -> Any:
         raw_config = load_toml(runtime.config_path)
     except ReviewflowError:
         return None
-    if not isinstance(raw_config, dict):
-        return None
-    return raw_config.get("system_one")
+    return extract_system_one_section(raw_config)
 
 
 def _doctor_system_one_config_check(raw_section: Any) -> DoctorCheck | None:
@@ -3287,7 +3286,7 @@ def _doctor_system_one_config_check(raw_section: Any) -> DoctorCheck | None:
 def _doctor_system_one_probe_status_check(status_code: int) -> DoctorCheck:
     if 200 <= status_code < 300:
         return DoctorCheck(name="system-one-api-key", status="ok", detail="openrouter key reachable")
-    if status_code in _SYSTEM_ONE_API_KEY_AUTH_STATUSES:
+    if status_code in OPENROUTER_AUTH_STATUSES:
         return DoctorCheck(
             name="system-one-api-key",
             status="fail",

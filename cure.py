@@ -130,9 +130,11 @@ from cure_system_one import (
     SystemOneClient,
     SystemOneConfig,
     SystemOneConfigError,
+    extract_system_one_section,
     resolve_synth_inputs,
     resolve_system_one_config,
 )
+from cure_system_one.client import utc_now_iso
 from cure_system_one.prompt_vars import evidence_matrix_prompt_vars
 
 from ui import Verbosity
@@ -4848,9 +4850,7 @@ def _system_one_section(config_path: Path | None) -> Any:
         raw_config = load_toml(path)
     except ReviewflowError:
         return None
-    if not isinstance(raw_config, dict):
-        return None
-    return raw_config.get("system_one")
+    return extract_system_one_section(raw_config)
 
 
 def _system_one_config_degraded_inputs() -> SynthInputs:
@@ -4859,8 +4859,17 @@ def _system_one_config_degraded_inputs() -> SynthInputs:
     A malformed section is a configuration error, so both chained stages are
     recorded as skipped with the ``config`` cause and no provider is called.
     """
-    record = {"cause": "config", "kind": "config", "provider": None, "operation": None}
-    return SynthInputs(skipped=True, degraded=(record, dict(record)))
+    recorded_at = utc_now_iso()
+    record = {
+        "cause": "config",
+        "kind": "config",
+        "provider": None,
+        "operation": None,
+        "stage": "dedup",
+        "recorded_at": recorded_at,
+    }
+    mirrored = {**record, "stage": "preflight"}
+    return SynthInputs(skipped=True, degraded=(record, mirrored))
 
 
 def _resolve_system_one_synth_inputs(
@@ -4968,7 +4977,12 @@ def _prepare_synth_inputs_with_system_one(
     )
     if so_ctx is not None:
         _write_system_one_meta(meta=meta, so_ctx=so_ctx, config_path=config_path)
-    if so_ctx is not None and not so_ctx.skipped and so_ctx.matrix_rows == 0:
+    if (
+        so_ctx is not None
+        and not so_ctx.skipped
+        and so_ctx.matrix_rows == 0
+        and so_ctx.findings_in > 0
+    ):
         meta["status"] = "error"
         meta.setdefault("multipass", {})["status"] = "step_failed"
         _emit_multipass_grounding_failure_playbook(

@@ -12,7 +12,11 @@ from cure_system_one.cards import (
     parse_findings,
 )
 from cure_system_one.client import SystemOneClient, build_client
-from cure_system_one.config import SystemOneConfig, resolve_system_one_config
+from cure_system_one.config import (
+    SystemOneConfig,
+    extract_system_one_section,
+    resolve_system_one_config,
+)
 from cure_system_one.dedup import (
     ClusterMember,
     DedupCluster,
@@ -89,6 +93,7 @@ __all__ = [
     "SystemOneTransientError",
     "build_client",
     "create_provider",
+    "extract_system_one_section",
     "parse_findings",
     "provider_names",
     "render_preflight_omission_block",

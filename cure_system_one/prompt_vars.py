@@ -48,20 +48,29 @@ def evidence_matrix_prompt_vars(
     the matrix is present the guidance carries the pre-flight omission block and
     marks every passthrough artifact as a verbatim read, the matrix artifact is
     injected, and ``STEP_OUTPUT_PATHS`` lists the matrix path followed by every
-    passthrough path.
+    passthrough path. A matrix artifact that has gone missing or is unreadable
+    falls back to the off values rather than failing synthesis.
     """
     if so_ctx is None or so_ctx.skipped or so_ctx.matrix_path is None:
-        return {
-            "EVIDENCE_MATRIX_GUIDANCE": "",
-            "EVIDENCE_MATRIX": "",
-            "STEP_OUTPUT_PATHS": raw_step_paths_text,
-        }
-    matrix_text = Path(so_ctx.matrix_path).read_text(encoding="utf-8")
+        return _off_prompt_vars(raw_step_paths_text)
+    try:
+        matrix_text = Path(so_ctx.matrix_path).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return _off_prompt_vars(raw_step_paths_text)
     effective_paths = (so_ctx.matrix_path, *so_ctx.passthrough_paths)
     return {
         "EVIDENCE_MATRIX_GUIDANCE": _render_matrix_guidance(so_ctx),
         "EVIDENCE_MATRIX": matrix_text,
         "STEP_OUTPUT_PATHS": "\n".join(f"- `{path}`" for path in effective_paths),
+    }
+
+
+def _off_prompt_vars(raw_step_paths_text: str) -> dict[str, str]:
+    """Return the raw-artifact variant shared by every off/skip path."""
+    return {
+        "EVIDENCE_MATRIX_GUIDANCE": "",
+        "EVIDENCE_MATRIX": "",
+        "STEP_OUTPUT_PATHS": raw_step_paths_text,
     }
 
 
