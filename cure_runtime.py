@@ -32,7 +32,7 @@ from cure_system_one import (
     extract_system_one_section,
     resolve_system_one_config,
 )
-from cure_system_one.providers.openrouter import OPENROUTER_AUTH_STATUSES
+from cure_system_one.providers.decisions import DECISIONS_AUTH_STATUSES
 from paths import (
     ReviewflowPaths,
     default_cache_root,
@@ -3285,17 +3285,21 @@ def _doctor_system_one_config_check(raw_section: Any) -> DoctorCheck | None:
 
 def _doctor_system_one_probe_status_check(status_code: int) -> DoctorCheck:
     if 200 <= status_code < 300:
-        return DoctorCheck(name="system-one-api-key", status="ok", detail="openrouter key reachable")
-    if status_code in OPENROUTER_AUTH_STATUSES:
+        return DoctorCheck(
+            name="system-one-api-key",
+            status="ok",
+            detail="openrouter-decisions key reachable",
+        )
+    if status_code in DECISIONS_AUTH_STATUSES:
         return DoctorCheck(
             name="system-one-api-key",
             status="fail",
-            detail=f"openrouter rejected the API key (HTTP {status_code})",
+            detail=f"openrouter-decisions rejected the API key (HTTP {status_code})",
         )
     return DoctorCheck(
         name="system-one-api-key",
         status="warn",
-        detail=f"openrouter key probe inconclusive (HTTP {status_code})",
+        detail=f"openrouter-decisions key probe inconclusive (HTTP {status_code})",
     )
 
 
@@ -3314,13 +3318,13 @@ def _doctor_system_one_openrouter_key_probe(key: str, *, timeout_ms: int) -> Doc
         return DoctorCheck(
             name="system-one-api-key",
             status="warn",
-            detail=f"openrouter key probe failed: {exc}",
+            detail=f"openrouter-decisions key probe failed: {exc}",
         )
     return _doctor_system_one_probe_status_check(status)
 
 
 def _doctor_system_one_api_key_check(config: Any) -> DoctorCheck:
-    if config.provider != "openrouter":
+    if config.provider == "local":
         return DoctorCheck(
             name="system-one-api-key",
             status="ok",

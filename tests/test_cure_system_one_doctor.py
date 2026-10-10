@@ -356,3 +356,24 @@ def test_setup_advisory_display_only(tmp_path: Path) -> None:
     assert agent_choice.call_args.kwargs["interactive"] is False
     assert stdin.getvalue() == ""
     assert "system_one" not in runtime.config_path.read_text(encoding="utf-8")
+
+
+def test_decisions_provider_doctor_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-key")
+    calls = _install_urlopen(monkeypatch, lambda request, *a, **k: _FakeResponse(200))
+
+    checks = _system_one_checks(
+        _runtime(
+            tmp_path / "decisions",
+            '[system_one]\nenabled = true\nprovider = "openrouter-decisions"\n'
+            'model = "typesafe/jev-1.13"',
+        )
+    )
+    assert checks["system-one-config"].status == "ok"
+    assert "openrouter-decisions" in checks["system-one-config"].detail
+    assert checks["system-one-api-key"].status == "ok"
+    assert "openrouter-decisions" in checks["system-one-api-key"].detail
+    assert calls and calls[0].full_url == "https://openrouter.ai/api/v1/key"
+    assert calls[0].get_method() == "GET"
