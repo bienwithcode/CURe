@@ -12,8 +12,8 @@ from typing import Any
 
 from cure_system_one.errors import SystemOneConfigError
 
-DEFAULT_PROVIDER = "openrouter"
-DEFAULT_MODEL = "openai/gpt-4o-mini"
+DEFAULT_PROVIDER = "openrouter-decisions"
+DEFAULT_MODEL = "typesafe/jev-1.13"
 DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"  # pragma: allowlist secret
 DEFAULT_TIMEOUT_MS = 2500
 DEFAULT_TEMPERATURE = 0.0
@@ -27,7 +27,7 @@ DEFAULT_MAX_CONTEXT_CHARS = 4000
 DEFAULT_MAX_SUBJECT_CHARS = 2000
 DEFAULT_BATCH_CHUNK_SIZE = 100
 
-SUPPORTED_PROVIDERS = ("openrouter", "local")
+SUPPORTED_PROVIDERS = ("openrouter-decisions", "openrouter", "local")
 
 
 @dataclass(frozen=True)

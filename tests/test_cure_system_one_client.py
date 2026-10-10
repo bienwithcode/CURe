@@ -392,3 +392,25 @@ def test_batch_filter_rejected_when_adapter_omits_it() -> None:
         client.batch_filter(["a"])
     assert "batch_filter" in str(error.value)
     assert adapter.calls == []
+
+
+def test_batch_filter_rejected_on_decisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cure_system_one import build_client
+    from cure_system_one.config import resolve_system_one_config
+    from cure_system_one.errors import SystemOneConfigError
+    from cure_system_one.providers import decisions as decisions_module
+
+    def _no_network(*args: Any, **kwargs: Any):  # pragma: no cover - guard
+        raise AssertionError("batch_filter must not reach the provider")
+
+    monkeypatch.setattr(decisions_module.urllib.request, "urlopen", _no_network)
+    config = resolve_system_one_config(
+        {"enabled": True, "provider": "openrouter-decisions"}
+    )
+    client = build_client(config)
+
+    with pytest.raises(SystemOneConfigError) as error:
+        client.batch_filter(["a"])
+    assert "batch_filter" in str(error.value)

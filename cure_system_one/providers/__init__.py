@@ -67,7 +67,14 @@ def _local_factory(config: Any) -> ProviderAdapter:
     return LocalProvider(config)
 
 
+def _decisions_factory(config: Any) -> ProviderAdapter:
+    from cure_system_one.providers.decisions import DecisionsAdapter
+
+    return DecisionsAdapter(config)
+
+
 _PROVIDER_FACTORIES: dict[str, Callable[[Any], ProviderAdapter]] = {
+    "openrouter-decisions": _decisions_factory,
     "openrouter": _openrouter_factory,
     "local": _local_factory,
 }
