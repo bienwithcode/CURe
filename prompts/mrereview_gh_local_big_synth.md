@@ -10,6 +10,12 @@ This is the **final synthesis** step of a multipass review.
 - Plan JSON path: `$PLAN_JSON_PATH`
 - Step output files (read them all):
 $STEP_OUTPUT_PATHS
+
+$EVIDENCE_MATRIX_GUIDANCE
+
+- Evidence matrix (System 1 pre-flight; authoritative when present):
+$EVIDENCE_MATRIX
+
 - Grounding-skipped step outputs excluded from synth:
 $GROUNDING_SKIPPED_STEPS
 

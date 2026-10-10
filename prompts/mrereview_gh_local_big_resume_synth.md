@@ -13,6 +13,12 @@ This is the final synthesis step for an incremental resume.
 - Resume plan JSON path: `$RESUME_PLAN_JSON_PATH`
 - Step output files (read the listed files that exist):
 $STEP_OUTPUT_PATHS
+
+$EVIDENCE_MATRIX_GUIDANCE
+
+- Evidence matrix (System 1 pre-flight; authoritative when present):
+$EVIDENCE_MATRIX
+
 - Grounding-skipped step outputs excluded from synth:
 $GROUNDING_SKIPPED_STEPS
 
