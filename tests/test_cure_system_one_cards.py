@@ -94,3 +94,13 @@ def test_parse_failure_marker() -> None:
     assert empty.parse_failed is False
     assert empty.cards == ()
     assert parsed.parse_failed != empty.parse_failed
+
+
+def test_contract_placeholder_is_not_a_card() -> None:
+    from cure_citations import NONE_FINDINGS_BULLET
+    from cure_system_one.cards import parse_findings
+
+    assert NONE_FINDINGS_BULLET == "- None."
+    parsed = parse_findings("### Findings\n- None.\n")
+    assert parsed.cards == ()
+    assert parsed.parse_failed is False

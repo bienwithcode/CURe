@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from cure_citations import CITATION_LINE_RE, trailing_sources_suffix
+from cure_citations import CITATION_LINE_RE, NONE_FINDINGS_BULLET, trailing_sources_suffix
 
 SEVERITY_TOKENS = ("Critical", "High", "Medium", "Low", "Info")
 UNSPECIFIED_SEVERITY = "unspecified"
@@ -86,6 +86,8 @@ def parse_findings(text: str, *, step_index: int = 0) -> ArtifactCards:
             in_findings = False
             continue
         if in_findings and line.startswith("- "):
+            if line.strip() == NONE_FINDINGS_BULLET:
+                continue
             cards.append(
                 FindingCard(
                     step_index=step_index,

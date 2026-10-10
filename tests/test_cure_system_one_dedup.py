@@ -453,3 +453,23 @@ def test_replay_corpus_clusters(
     assert len(total.clusters) == 1
     assert len(total.clusters[0].members) == 5
     assert total.clusters[0].representative.text == "- [High] same"
+
+
+def test_placeholder_only_corpus_is_finding_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cure_system_one.dedup import run_dedup
+
+    config = _config()
+    client = _RecordingClient(_build_client(config, None, tmp_path, monkeypatch))
+    result = run_dedup(
+        [_artifact(0, "- None."), _artifact(1, "- None.")],
+        client=client,
+        config=config,
+    )
+    assert result.skipped is False
+    assert result.clusters == ()
+    assert result.summary is not None
+    assert result.summary.findings_in == 0
+    assert result.summary.clusters_out == 0
+    assert client.calls == []

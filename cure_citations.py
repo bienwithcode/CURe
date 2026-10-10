@@ -20,12 +20,17 @@ CITATION_LABEL_PREFIX = f"{CITATION_LABEL}:"
 
 SOURCES_CITATION_SHAPE = "`relative/path:line`"
 
+# The exact bullet a step artifact carries when it has no findings. Parsers treat
+# an exact-match bullet as a non-finding so a finding-free review never enters
+# the dedup/pre-flight path as a single hallucinated cluster.
+NONE_FINDINGS_BULLET = "- None."
+
 STEP_CITATION_CONTRACT = (
     f"- Every non-empty `### Findings` bullet ends with a trailing `{CITATION_LABEL_PREFIX}` "
     f"suffix listing one or more real repo citations in {SOURCES_CITATION_SHAPE} form.\n"
     f"- Cite `path:line`, not just `path`. File-only `{CITATION_LABEL_PREFIX}` text is treated "
     "as incomplete and fails grounding.\n"
-    "- If there are no findings, write exactly `- None.` with no trailing suffix.\n"
+    f"- If there are no findings, write exactly `{NONE_FINDINGS_BULLET}` with no trailing suffix.\n"
     "- Do not emit an inline `Evidence:` label; the trailing-suffix contract is `"
     f"{CITATION_LABEL_PREFIX}` in all review prompts."
 )
