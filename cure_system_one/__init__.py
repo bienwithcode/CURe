@@ -30,6 +30,23 @@ from cure_system_one.errors import (
     SystemOneSchemaViolationError,
     SystemOneTransientError,
 )
+from cure_system_one.pipeline import SynthInputs, resolve_synth_inputs
+from cure_system_one.preflight import (
+    CITATION_DEAD,
+    CITATION_SUPPORTED,
+    CITATION_UNSUPPORTED,
+    DEFAULT_MATRIX_FILENAME,
+    MECHANICAL_LAYER,
+    SEMANTIC_LAYER,
+    CitationEntry,
+    FindingExclusion,
+    MatrixRow,
+    PreflightDegraded,
+    PreflightResult,
+    PreflightSummary,
+    run_preflight,
+)
+from cure_system_one.prompt_vars import render_preflight_omission_block
 from cure_system_one.providers import (
     ProviderAdapter,
     ProviderTransportError,
@@ -39,16 +56,29 @@ from cure_system_one.providers import (
 
 __all__ = [
     "ArtifactCards",
+    "CITATION_DEAD",
+    "CITATION_SUPPORTED",
+    "CITATION_UNSUPPORTED",
     "Citation",
+    "CitationEntry",
     "ClusterMember",
+    "DEFAULT_MATRIX_FILENAME",
     "DedupCluster",
     "DedupDegraded",
     "DedupResult",
     "DedupSummary",
     "FindingCard",
+    "FindingExclusion",
+    "MECHANICAL_LAYER",
+    "MatrixRow",
+    "PreflightDegraded",
+    "PreflightResult",
+    "PreflightSummary",
     "ProviderAdapter",
     "ProviderTransportError",
+    "SEMANTIC_LAYER",
     "StepArtifact",
+    "SynthInputs",
     "SystemOneClient",
     "SystemOneConfig",
     "SystemOneConfigError",
@@ -61,6 +91,9 @@ __all__ = [
     "create_provider",
     "parse_findings",
     "provider_names",
+    "render_preflight_omission_block",
+    "resolve_synth_inputs",
     "resolve_system_one_config",
     "run_dedup",
+    "run_preflight",
 ]
