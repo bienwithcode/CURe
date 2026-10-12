@@ -20,12 +20,17 @@ CITATION_LABEL_PREFIX = f"{CITATION_LABEL}:"
 
 SOURCES_CITATION_SHAPE = "`relative/path:line`"
 
+# The exact bullet a step artifact carries when it has no findings. Parsers treat
+# an exact-match bullet as a non-finding so a finding-free review never enters
+# the dedup/pre-flight path as a single hallucinated cluster.
+NONE_FINDINGS_BULLET = "- None."
+
 STEP_CITATION_CONTRACT = (
     f"- Every non-empty `### Findings` bullet ends with a trailing `{CITATION_LABEL_PREFIX}` "
     f"suffix listing one or more real repo citations in {SOURCES_CITATION_SHAPE} form.\n"
     f"- Cite `path:line`, not just `path`. File-only `{CITATION_LABEL_PREFIX}` text is treated "
     "as incomplete and fails grounding.\n"
-    "- If there are no findings, write exactly `- None.` with no trailing suffix.\n"
+    f"- If there are no findings, write exactly `{NONE_FINDINGS_BULLET}` with no trailing suffix.\n"
     "- Do not emit an inline `Evidence:` label; the trailing-suffix contract is `"
     f"{CITATION_LABEL_PREFIX}` in all review prompts."
 )
@@ -95,12 +100,27 @@ def has_path_line_citation(suffix_text: str) -> bool:
     return bool(CITATION_LINE_RE.search(suffix_text or ""))
 
 
+# Sentence punctuation and bracket decoration that commonly wraps a trailing
+# ``Sources:`` citation in prose (e.g. ``... `src/a.py:12`.``). These characters
+# are not citation fragments, so stripping them before classification keeps a
+# trailing sentence period from being mistaken for an incomplete file-only
+# citation, while still preserving genuinely malformed slots (``,,,``, trailing
+# commas, file-only ``src/a.py``).
+_SOURCE_DECORATION_CHARS = ".,;()[]{}<>\"'"
+
+
+def _strip_source_decoration(fragment: str) -> str:
+    """Strip surrounding prose punctuation from a non-citation fragment."""
+    return str(fragment or "").strip().strip("`").strip(_SOURCE_DECORATION_CHARS).strip()
+
+
 def _split_sources_slot(slot_text: str) -> list[str]:
     """Split one comma-delimited slot into normalized citation fragments.
 
     Empty slots are preserved as ``""`` so malformed suffixes like ```, ,``` or
     trailing commas remain visible to :func:`has_incomplete_sources` instead of
-    being silently discarded.
+    being silently discarded. Surrounding prose punctuation (e.g. the sentence
+    period after the final citation) is not a citation fragment and is ignored.
     """
     normalized_slot = str(slot_text or "").strip()
     if not normalized_slot:
@@ -108,12 +128,12 @@ def _split_sources_slot(slot_text: str) -> list[str]:
     items: list[str] = []
     cursor = 0
     for match in _BACKTICKED_SOURCE_ITEM_RE.finditer(normalized_slot):
-        prefix = normalized_slot[cursor:match.start()].strip().strip("`")
+        prefix = _strip_source_decoration(normalized_slot[cursor:match.start()])
         if prefix:
             items.append(prefix)
         items.append(match.group(1).strip())
         cursor = match.end()
-    tail = normalized_slot[cursor:].strip().strip("`")
+    tail = _strip_source_decoration(normalized_slot[cursor:])
     if tail:
         items.append(tail)
     return items or [""]

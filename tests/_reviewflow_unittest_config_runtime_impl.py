@@ -296,6 +296,27 @@ class CureCitationsPublicApiTests(unittest.TestCase):
             cc.has_incomplete_sources("Finding. Sources: `src/a.py:12` src/b.py")
         )
 
+    def test_has_incomplete_sources_ignores_trailing_sentence_punctuation(self) -> None:
+        import cure_citations as cc
+
+        # A sentence period (or other prose punctuation) after the final
+        # backticked citation must not be read as an incomplete citation item.
+        self.assertFalse(cc.has_incomplete_sources("Finding. Sources: `src/a.py:12`."))
+        self.assertFalse(
+            cc.has_incomplete_sources("Finding. Sources: `src/a.py:12`, `tests/b.py:44`.")
+        )
+        self.assertFalse(cc.has_incomplete_sources("Finding. Sources: `src/a.py:12`;"))
+        self.assertFalse(cc.has_incomplete_sources("Finding. Sources: (`src/a.py:12`)"))
+        self.assertFalse(cc.has_incomplete_sources("Finding. Sources: src/a.py:12."))
+
+    def test_has_incomplete_sources_still_flags_file_only_with_punctuation(self) -> None:
+        import cure_citations as cc
+
+        # Stripping prose punctuation must not mask a genuinely incomplete
+        # (file-only) citation.
+        self.assertTrue(cc.has_incomplete_sources("Finding. Sources: `src/a.py`."))
+        self.assertTrue(cc.has_incomplete_sources("Finding. Sources: src/a.py."))
+
     def test_has_incomplete_sources_false_when_no_marker(self) -> None:
         import cure_citations as cc
 

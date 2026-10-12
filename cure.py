@@ -124,6 +124,18 @@ from cure_github import (
     require_gh_auth,
 )
 from cure_runtime import _normalize_optional_reasoning_effort
+from cure_system_one import (
+    StepArtifact,
+    SynthInputs,
+    SystemOneClient,
+    SystemOneConfig,
+    SystemOneConfigError,
+    extract_system_one_section,
+    resolve_synth_inputs,
+    resolve_system_one_config,
+)
+from cure_system_one.client import utc_now_iso
+from cure_system_one.prompt_vars import evidence_matrix_prompt_vars
 
 from ui import Verbosity
 
@@ -839,6 +851,7 @@ def _resolve_session_review_artifact_llm_meta(*, meta: dict[str, Any]) -> dict[s
 
 
 def _refresh_session_review_footer(*, meta: dict[str, Any], markdown_path: Path) -> None:
+    emit_system_one_degraded_advisory(meta)
     _refresh_review_artifact_footer(
         markdown_path=markdown_path,
         cure_version=_resolve_cure_version(),
@@ -4824,6 +4837,233 @@ def _prepare_synth_inputs(
             "All multipass steps were grounding-skipped; review synthesis cannot continue."
         )
     return synth_step_outputs, skipped_prompt_text
+
+
+def _system_one_section(config_path: Path | None) -> Any:
+    """Read the raw ``[system_one]`` table from the resolved config file.
+
+    Missing or unreadable config files degrade to ``None`` so the System 1 path
+    is simply absent rather than an error.
+    """
+    path = config_path or default_reviewflow_config_path()
+    try:
+        raw_config = load_toml(path)
+    except ReviewflowError:
+        return None
+    return extract_system_one_section(raw_config)
+
+
+def _system_one_config_degraded_inputs() -> SynthInputs:
+    """Degrade a malformed ``[system_one]`` to a raw-artifact skip.
+
+    A malformed section is a configuration error, so both chained stages are
+    recorded as skipped with the ``config`` cause and no provider is called.
+    """
+    recorded_at = utc_now_iso()
+    record = {
+        "cause": "config",
+        "kind": "config",
+        "provider": None,
+        "operation": None,
+        "stage": "dedup",
+        "recorded_at": recorded_at,
+    }
+    mirrored = {**record, "stage": "preflight"}
+    return SynthInputs(skipped=True, degraded=(record, mirrored))
+
+
+def _resolve_system_one_synth_inputs(
+    *,
+    synth_step_outputs: list[str],
+    repo_dir: Path,
+    session_dir: Path,
+    config_path: Path | None,
+) -> SynthInputs | None:
+    """Resolve the optional System 1 pre-synthesis inputs.
+
+    ``None`` means the feature is disabled and the raw artifacts are used
+    unchanged. A malformed section degrades leniently to a skip instead of
+    raising, so the review continues through the System 2 path.
+    """
+    raw_section = _system_one_section(config_path)
+    try:
+        config = resolve_system_one_config(raw_section)
+    except SystemOneConfigError:
+        return _system_one_config_degraded_inputs()
+    if not config.enabled:
+        return None
+    client = SystemOneClient.from_snapshot(config)
+    artifacts: list[StepArtifact] = []
+    for index, output in enumerate(synth_step_outputs):
+        output_path = Path(output)
+        try:
+            text = output_path.read_text(encoding="utf-8") if output_path.is_file() else None
+        except (OSError, UnicodeDecodeError) as e:
+            raise ReviewflowError(
+                f"Failed to read synth input artifact at {output_path}: {e}"
+            ) from e
+        artifacts.append(StepArtifact(step_index=index, text=text, path=str(output_path)))
+    return resolve_synth_inputs(
+        artifacts,
+        client=client,
+        config=config,
+        repo_dir=repo_dir,
+        session_dir=session_dir,
+    )
+
+
+def _system_one_status(config_path: Path | None) -> dict[str, Any]:
+    """Resolve the additive ``multipass.system_one.status`` record."""
+    raw_section = _system_one_section(config_path)
+    try:
+        config = resolve_system_one_config(raw_section)
+    except SystemOneConfigError:
+        return {"enabled": True, "provider": None, "model": None}
+    return {
+        "enabled": bool(config.enabled),
+        "provider": config.provider,
+        "model": config.model,
+    }
+
+
+def _write_system_one_meta(
+    *, meta: dict[str, Any], so_ctx: SynthInputs, config_path: Path | None
+) -> None:
+    """Persist the additive ``multipass.system_one`` records.
+
+    All fields are additive; existing session readers use ``meta.get`` and so
+    tolerate the new keys. ``advisory_emitted`` defaults to ``False`` and is
+    flipped by :func:`emit_system_one_degraded_advisory`.
+    """
+    system_one = meta.setdefault("multipass", {}).setdefault("system_one", {})
+    system_one["status"] = _system_one_status(config_path)
+    payload = so_ctx.to_meta()
+    system_one["dedup"] = payload["dedup"]
+    system_one["preflight"] = payload["preflight"]
+    system_one["matrix_path"] = payload["matrix_path"]
+    system_one["degraded"] = payload["degraded"]
+    system_one.setdefault("advisory_emitted", False)
+
+
+def _prepare_synth_inputs_with_system_one(
+    *,
+    meta: dict[str, Any],
+    step_entries: list[MultipassStepEntry],
+    session_id: str,
+    session_dir: Path,
+    work_dir: Path,
+    review_md_path: Path,
+    repo_dir: Path,
+    config_path: Path | None = None,
+    prefer_persisted_skips: bool = False,
+) -> tuple[list[str], str, SynthInputs | None]:
+    """Run the existing synth-input guard, then the optional System 1 stages.
+
+    Returns the unchanged ``_prepare_synth_inputs`` outputs plus a ``so_ctx``
+    describing the resolved System 1 inputs (``None`` when the feature is off).
+    When the evidence matrix comes back empty the wrapper performs the
+    matrix-level terminal: error status, grounding-failure playbook, and a
+    ``ReviewflowError`` so synthesis never runs on an all-excluded matrix.
+    """
+    synth_step_outputs, skipped_prompt_text = _prepare_synth_inputs(
+        meta=meta,
+        step_entries=step_entries,
+        session_id=session_id,
+        session_dir=session_dir,
+        work_dir=work_dir,
+        review_md_path=review_md_path,
+        prefer_persisted_skips=prefer_persisted_skips,
+    )
+    so_ctx = _resolve_system_one_synth_inputs(
+        synth_step_outputs=synth_step_outputs,
+        repo_dir=repo_dir,
+        session_dir=session_dir,
+        config_path=config_path,
+    )
+    if so_ctx is not None:
+        _write_system_one_meta(meta=meta, so_ctx=so_ctx, config_path=config_path)
+    if (
+        so_ctx is not None
+        and not so_ctx.skipped
+        and so_ctx.matrix_rows == 0
+        and so_ctx.findings_in > 0
+        and not so_ctx.passthrough_paths
+    ):
+        meta["status"] = "error"
+        meta.setdefault("multipass", {})["status"] = "step_failed"
+        _emit_multipass_grounding_failure_playbook(
+            meta=meta,
+            session_id=session_id,
+            session_dir=session_dir,
+            work_dir=work_dir,
+            artifact_path=review_md_path,
+            validation={
+                "errors": [
+                    "System 1 pre-flight excluded every finding; no grounded synthesis inputs remain."
+                ]
+            },
+            resume_from="steps",
+        )
+        raise ReviewflowError(
+            "System 1 pre-flight excluded every finding; review synthesis cannot continue."
+        )
+    return synth_step_outputs, skipped_prompt_text, so_ctx
+
+
+def _synth_extra_vars_with_system_one(
+    extra_vars: dict[str, str],
+    *,
+    so_ctx: SynthInputs | None,
+    raw_step_paths_text: str,
+) -> dict[str, str]:
+    """Merge the conditional evidence-matrix variables over the synth vars.
+
+    The matrix variant is merged last so it wins over the raw
+    ``STEP_OUTPUT_PATHS`` entry and is selected only when System 1 resolved a
+    non-empty evidence matrix.
+    """
+    return {
+        **extra_vars,
+        **evidence_matrix_prompt_vars(
+            so_ctx, raw_step_paths_text=raw_step_paths_text
+        ),
+    }
+
+
+def emit_system_one_degraded_advisory(meta: dict[str, Any]) -> None:
+    """Emit exactly one advisory line when System 1 degraded mid-run.
+
+    The earliest-stage degraded record names the initiating cause; the
+    ``multipass.system_one.advisory_emitted`` guard makes the emission
+    exactly-once per session, so calling this at several completion seams is
+    safe. A clean run emits nothing.
+    """
+    multipass = meta.get("multipass") if isinstance(meta.get("multipass"), dict) else {}
+    system_one = (
+        multipass.get("system_one")
+        if isinstance(multipass.get("system_one"), dict)
+        else {}
+    )
+    if system_one.get("advisory_emitted"):
+        return
+    degraded = system_one.get("degraded")
+    if not isinstance(degraded, list) or not degraded:
+        return
+    initiating = next(
+        (
+            record
+            for record in degraded
+            if isinstance(record, dict) and record.get("cause")
+        ),
+        None,
+    )
+    if initiating is None:
+        return
+    cause = str(initiating.get("cause"))
+    _eprint(
+        f"System 1 pre-synthesis degraded ({cause}); continuing with the raw step outputs."
+    )
+    system_one["advisory_emitted"] = True
 
 
 # Non-TTY resume returns "rerun" intentionally: Story 35 policy requires that
@@ -10183,13 +10423,15 @@ def _pr_flow_impl(
                         )
                         success_resume_command = step_resume_command or success_resume_command
 
-                    synth_step_outputs, skipped_prompt_text = _prepare_synth_inputs(
+                    synth_step_outputs, skipped_prompt_text, so_ctx = _prepare_synth_inputs_with_system_one(
                         meta=progress.meta,
                         step_entries=step_entries,
                         session_id=session_id,
                         session_dir=session_dir,
                         work_dir=work_dir,
                         review_md_path=review_md_path,
+                        repo_dir=repo_dir,
+                        config_path=effective_config_path,
                     )
                     progress.meta.setdefault("multipass", {})["current"] = {
                         "stage": "synth",
@@ -10215,21 +10457,25 @@ def _pr_flow_impl(
                                 gh_repo=str(pr.gh_repo),
                                 agent_desc=agent_desc,
                                 head_ref="HEAD",
-                                extra_vars={
-                                    **review_intelligence_prompt_vars(
-                                        review_intelligence_cfg,
-                                        capability_summary=review_intelligence_capabilities,
-                                    ),
-                                    **verbose_review_findings_prompt_vars(
-                                        enabled=bool(getattr(args, "wtf", False))
-                                    ),
-                                    **cod_hypothesis_ledger_prompt_vars(
-                                        enabled=bool(getattr(args, "cod_ledger", False))
-                                    ),
-                                    "PLAN_JSON_PATH": str(plan_json_path),
-                                    "STEP_OUTPUT_PATHS": step_paths_text,
-                                    "GROUNDING_SKIPPED_STEPS": skipped_prompt_text,
-                                },
+                                extra_vars=_synth_extra_vars_with_system_one(
+                                    {
+                                        **review_intelligence_prompt_vars(
+                                            review_intelligence_cfg,
+                                            capability_summary=review_intelligence_capabilities,
+                                        ),
+                                        **verbose_review_findings_prompt_vars(
+                                            enabled=bool(getattr(args, "wtf", False))
+                                        ),
+                                        **cod_hypothesis_ledger_prompt_vars(
+                                            enabled=bool(getattr(args, "cod_ledger", False))
+                                        ),
+                                        "PLAN_JSON_PATH": str(plan_json_path),
+                                        "STEP_OUTPUT_PATHS": step_paths_text,
+                                        "GROUNDING_SKIPPED_STEPS": skipped_prompt_text,
+                                    },
+                                    so_ctx=so_ctx,
+                                    raw_step_paths_text=step_paths_text,
+                                ),
                             )
 
                         def _execute_fresh_synth(prompt: str) -> str | None:
@@ -10757,6 +11003,7 @@ def _run_incremental_completed_multipass_resume(
     repo_dir: Path,
     work_dir: Path,
     review_md_path: Path,
+    config_path: Path | None = None,
     meta: dict[str, Any],
     pr: PullRequestRef,
     base_ref_for_review: str,
@@ -11100,13 +11347,15 @@ def _run_incremental_completed_multipass_resume(
             ]
             progress.meta.setdefault("multipass", {})["status"] = "steps_ready"
             _update_multipass_step_progress(progress.meta)
-    synth_step_outputs, skipped_prompt_text = _prepare_synth_inputs(
+    synth_step_outputs, skipped_prompt_text, so_ctx = _prepare_synth_inputs_with_system_one(
         meta=progress.meta,
         step_entries=step_entries,
         session_id=session_id,
         session_dir=session_dir,
         work_dir=work_dir,
         review_md_path=review_md_path,
+        repo_dir=repo_dir,
+        config_path=config_path,
         prefer_persisted_skips=is_synth_only_decision or resume_skip_choice == "keep",
     )
 
@@ -11147,20 +11396,24 @@ def _run_incremental_completed_multipass_resume(
                 gh_repo=str(pr.gh_repo),
                 agent_desc=agent_desc,
                 head_ref="HEAD",
-                extra_vars={
-                    **review_intelligence_prompt_vars(
-                        review_intelligence_cfg,
-                        capability_summary=review_intelligence_capabilities,
-                    ),
-                    **cod_hypothesis_ledger_prompt_vars(enabled=cod_ledger_enabled),
-                    **verbose_review_findings_prompt_vars(enabled=wtf_enabled),
-                    "PREVIOUS_REVIEW_MD": str(previous_review_snapshot_path),
-                    "PREVIOUS_REVIEW_HEAD_SHA": str(previous_review_point.head_sha or "").strip(),
-                    "CURRENT_REVIEW_HEAD_SHA": current_review_head_sha,
-                    "RESUME_PLAN_JSON_PATH": str(resume_plan_json_path),
-                    "STEP_OUTPUT_PATHS": step_paths_text,
-                    "GROUNDING_SKIPPED_STEPS": skipped_prompt_text,
-                },
+                extra_vars=_synth_extra_vars_with_system_one(
+                    {
+                        **review_intelligence_prompt_vars(
+                            review_intelligence_cfg,
+                            capability_summary=review_intelligence_capabilities,
+                        ),
+                        **cod_hypothesis_ledger_prompt_vars(enabled=cod_ledger_enabled),
+                        **verbose_review_findings_prompt_vars(enabled=wtf_enabled),
+                        "PREVIOUS_REVIEW_MD": str(previous_review_snapshot_path),
+                        "PREVIOUS_REVIEW_HEAD_SHA": str(previous_review_point.head_sha or "").strip(),
+                        "CURRENT_REVIEW_HEAD_SHA": current_review_head_sha,
+                        "RESUME_PLAN_JSON_PATH": str(resume_plan_json_path),
+                        "STEP_OUTPUT_PATHS": step_paths_text,
+                        "GROUNDING_SKIPPED_STEPS": skipped_prompt_text,
+                    },
+                    so_ctx=so_ctx,
+                    raw_step_paths_text=step_paths_text,
+                ),
             )
 
         def _execute_incremental_synth(prompt: str) -> str | None:
@@ -11657,6 +11910,7 @@ def _resume_flow_impl(
                 repo_dir=repo_dir,
                 work_dir=work_dir,
                 review_md_path=review_md_path,
+                config_path=effective_config_path,
                 meta=meta,
                 pr=pr,
                 base_ref_for_review=base_ref_for_review,
@@ -12045,13 +12299,15 @@ def _resume_flow_impl(
                 progress.meta.setdefault("multipass", {})["status"] = "steps_ready"
                 _update_multipass_step_progress(progress.meta)
 
-        synth_step_outputs, skipped_prompt_text = _prepare_synth_inputs(
+        synth_step_outputs, skipped_prompt_text, so_ctx = _prepare_synth_inputs_with_system_one(
             meta=progress.meta,
             step_entries=step_entries,
             session_id=session_id,
             session_dir=session_dir,
             work_dir=work_dir,
             review_md_path=review_md_path,
+            repo_dir=repo_dir,
+            config_path=effective_config_path,
             prefer_persisted_skips=from_phase == "synth" or resume_skip_choice == "keep",
         )
 
@@ -12111,21 +12367,25 @@ def _resume_flow_impl(
                         gh_repo=str(pr.gh_repo),
                         agent_desc=agent_desc,
                         head_ref="HEAD",
-                        extra_vars={
-                            **review_intelligence_prompt_vars(
-                                review_intelligence_cfg,
-                                capability_summary=review_intelligence_capabilities,
-                            ),
-                            **verbose_review_findings_prompt_vars(
-                                enabled=bool(getattr(args, "wtf", False))
-                            ),
-                            **cod_hypothesis_ledger_prompt_vars(
-                                enabled=bool(getattr(args, "cod_ledger", False))
-                            ),
-                            "PLAN_JSON_PATH": str(plan_json_path),
-                            "STEP_OUTPUT_PATHS": step_paths_text,
-                            "GROUNDING_SKIPPED_STEPS": skipped_prompt_text,
-                        },
+                        extra_vars=_synth_extra_vars_with_system_one(
+                            {
+                                **review_intelligence_prompt_vars(
+                                    review_intelligence_cfg,
+                                    capability_summary=review_intelligence_capabilities,
+                                ),
+                                **verbose_review_findings_prompt_vars(
+                                    enabled=bool(getattr(args, "wtf", False))
+                                ),
+                                **cod_hypothesis_ledger_prompt_vars(
+                                    enabled=bool(getattr(args, "cod_ledger", False))
+                                ),
+                                "PLAN_JSON_PATH": str(plan_json_path),
+                                "STEP_OUTPUT_PATHS": step_paths_text,
+                                "GROUNDING_SKIPPED_STEPS": skipped_prompt_text,
+                            },
+                            so_ctx=so_ctx,
+                            raw_step_paths_text=step_paths_text,
+                        ),
                     )
 
                 def _execute_regular_resume_synth(prompt: str) -> str | None:

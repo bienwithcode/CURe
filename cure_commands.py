@@ -1061,6 +1061,11 @@ def setup_flow(
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
+    print(
+        "System 1 is optional: configure the `[system_one]` section in cure.toml; "
+        "see the CURe documentation for the value contract and run `cure doctor` to check readiness.",
+        file=stdout or sys.stdout,
+    )
     if _stream_is_tty(stdin or sys.stdin) and _stream_is_tty(stderr or sys.stderr):
         run_chunkhound_setup_wizard(
             runtime=runtime,
