@@ -280,6 +280,13 @@ def test_error_context_propagation() -> None:
     assert error.latency_ms > 0
     assert error.attempts == 2
 
+    # NaN compares False against both rubric bounds; it is still a violation.
+    client, _, _ = _make_client(
+        _outcomes({"score": float("nan"), "confidence": 0.5})
+    )
+    with pytest.raises(SystemOneSchemaViolationError):
+        client.score("subject", {"min": 0, "max": 10})
+
     client, _, _ = _make_client(
         _outcomes({"selected": "OPTION-X", "confidence": 0.5})
     )

@@ -52,7 +52,6 @@ REMOVED_HTTP_LLM_PRESETS = ("openai-responses", "openrouter-responses")
 CLI_LLM_PROVIDERS = ("codex",)
 LLM_RESUME_PROVIDERS = ("codex",)
 _SYSTEM_ONE_API_KEY_PROBE_URL = "https://openrouter.ai/api/v1/key"  # pragma: allowlist secret
-_SYSTEM_ONE_DEFAULT_API_KEY_ENV = "OPENROUTER_API_KEY"  # pragma: allowlist secret
 DEFAULT_LEGACY_CODEX_PRESET = "legacy_codex"
 DEFAULT_IMPLICIT_CODEX_PRESET = "codex-cli"
 IMPLICIT_CODEX_PRESET_SOURCE = "implicit_codex_cli"
@@ -3318,7 +3317,7 @@ def _doctor_system_one_openrouter_key_probe(key: str, *, timeout_ms: int) -> Doc
         return DoctorCheck(
             name="system-one-api-key",
             status="warn",
-            detail=f"openrouter-decisions key probe failed: {exc}",
+            detail=_redact_secrets(f"openrouter-decisions key probe failed: {exc}"),
         )
     return _doctor_system_one_probe_status_check(status)
 
@@ -3330,7 +3329,9 @@ def _doctor_system_one_api_key_check(config: Any) -> DoctorCheck:
             status="ok",
             detail="not required for local provider",
         )
-    key_env = str(config.api_key_env or "").strip() or _SYSTEM_ONE_DEFAULT_API_KEY_ENV
+    # ``resolve_system_one_config`` already strips and rejects a blank name, so
+    # the doctor reads the same env var the runtime adapter reads.
+    key_env = config.api_key_env
     key = os.environ.get(key_env, "").strip()
     if not key:
         return DoctorCheck(

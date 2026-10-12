@@ -7,6 +7,7 @@ snapshot and holds no mutable shared state between calls.
 """
 from __future__ import annotations
 
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -363,7 +364,11 @@ def _validate_score(raw: Any, minimum: float, maximum: float) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("score response is not an object")
     score = raw.get("score")
-    if not is_number(score) or float(score) < minimum or float(score) > maximum:
+    if (
+        not is_number(score)
+        or not math.isfinite(float(score))
+        or not minimum <= float(score) <= maximum
+    ):
         raise ValueError("score is outside the rubric range")
     confidence = raw.get("confidence")
     if not is_unit_interval(confidence):

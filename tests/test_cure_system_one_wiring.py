@@ -152,6 +152,40 @@ def test_matrix_variant_selected_strictly(tmp_path: Path) -> None:
     assert f"- `{matrix_path}`" not in prompt
 
 
+@pytest.mark.parametrize(
+    "template_name",
+    ["mrereview_gh_local_big_synth.md", "mrereview_gh_local_big_resume_synth.md"],
+)
+def test_flag_off_synth_prompt_matches_original(template_name: str) -> None:
+    import cure
+    from cure_flows import render_prompt
+
+    raw = "- `step-00.md`"
+    template = cure.load_builtin_prompt_text(template_name)
+    base = {"STEP_OUTPUT_PATHS": raw, "GROUNDING_SKIPPED_STEPS": "- None."}
+    extra = cure._synth_extra_vars_with_system_one(
+        base, so_ctx=None, raw_step_paths_text=raw
+    )
+    prompt = render_prompt(
+        template,
+        base_ref_for_review="main",
+        pr_url="https://github.com/o/r/pull/1",
+        pr_number=1,
+        gh_host="github.com",
+        gh_owner="o",
+        gh_repo_name="r",
+        gh_repo="o/r",
+        agent_desc="",
+        extra_vars=extra,
+    )
+
+    # Flag off renders the pre-feature layout: no System 1 text, and the raw
+    # read list is followed directly by the grounding-skipped bullet.
+    assert "System 1" not in prompt
+    assert "Evidence matrix" not in prompt
+    assert f"{raw}\n- Grounding-skipped step outputs excluded from synth:\n" in prompt
+
+
 def test_empty_matrix_terminal(tmp_path: Path, monkeypatch: Any) -> None:
     import cure
     from cure_system_one.pipeline import SynthInputs
@@ -196,6 +230,69 @@ def test_empty_matrix_terminal(tmp_path: Path, monkeypatch: Any) -> None:
     assert meta["multipass"]["status"] == "step_failed"
     assert playbook["calls"] == 1
     assert playbook["kwargs"]["resume_from"] == "steps"
+
+
+def test_passthrough_suppresses_empty_matrix_terminal(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import cure
+    from cure_system_one.pipeline import SynthInputs
+
+    outputs = _step_outputs(tmp_path, count=2)
+    monkeypatch.setattr(
+        cure, "_prepare_synth_inputs", lambda **kwargs: (list(outputs), "skipped")
+    )
+    so_ctx = SynthInputs(
+        skipped=False,
+        matrix_rows=0,
+        matrix_path=None,
+        findings_in=1,
+        passthrough_paths=(outputs[1],),
+    )
+    monkeypatch.setattr(cure, "resolve_synth_inputs", lambda artifacts, **kwargs: so_ctx)
+    playbook: dict[str, Any] = {"calls": 0}
+    monkeypatch.setattr(
+        cure,
+        "_emit_multipass_grounding_failure_playbook",
+        lambda **kwargs: playbook.__setitem__("calls", playbook["calls"] + 1),
+    )
+    config_path = _write_config(
+        tmp_path, '[system_one]\nenabled = true\nprovider = "local"\n'
+    )
+    meta: dict[str, Any] = {}
+
+    # A passthrough artifact is still a usable synthesis input, so an
+    # all-excluded matrix must not abort the review.
+    _, _, result = cure._prepare_synth_inputs_with_system_one(
+        meta=meta,
+        step_entries=[],
+        session_id="session-passthrough",
+        session_dir=tmp_path,
+        work_dir=tmp_path,
+        review_md_path=tmp_path / "review.md",
+        repo_dir=tmp_path,
+        config_path=config_path,
+    )
+    assert result is so_ctx
+    assert meta.get("status") != "error"
+    assert playbook["calls"] == 0
+
+
+def test_undecodable_step_artifact_raises_reviewflow_error(tmp_path: Path) -> None:
+    import cure
+
+    artifact = tmp_path / "step-00.md"
+    artifact.write_bytes(b"### Findings\n- \xff\xfe not utf-8\n")
+    config_path = _write_config(
+        tmp_path, '[system_one]\nenabled = true\nprovider = "local"\n'
+    )
+    with pytest.raises(cure.ReviewflowError, match="step-00.md"):
+        cure._resolve_system_one_synth_inputs(
+            synth_step_outputs=[str(artifact)],
+            repo_dir=tmp_path,
+            session_dir=tmp_path,
+            config_path=config_path,
+        )
 
 
 def test_zero_findings_skips_terminal_and_proceeds(

@@ -4896,7 +4896,12 @@ def _resolve_system_one_synth_inputs(
     artifacts: list[StepArtifact] = []
     for index, output in enumerate(synth_step_outputs):
         output_path = Path(output)
-        text = output_path.read_text(encoding="utf-8") if output_path.is_file() else None
+        try:
+            text = output_path.read_text(encoding="utf-8") if output_path.is_file() else None
+        except (OSError, UnicodeDecodeError) as e:
+            raise ReviewflowError(
+                f"Failed to read synth input artifact at {output_path}: {e}"
+            ) from e
         artifacts.append(StepArtifact(step_index=index, text=text, path=str(output_path)))
     return resolve_synth_inputs(
         artifacts,
@@ -4982,6 +4987,7 @@ def _prepare_synth_inputs_with_system_one(
         and not so_ctx.skipped
         and so_ctx.matrix_rows == 0
         and so_ctx.findings_in > 0
+        and not so_ctx.passthrough_paths
     ):
         meta["status"] = "error"
         meta.setdefault("multipass", {})["status"] = "step_failed"

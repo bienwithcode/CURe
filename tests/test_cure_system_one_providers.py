@@ -219,6 +219,22 @@ def test_decisions_status_taxonomy(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     assert network.value.kind == "transient"
 
+    # A mid-response protocol failure is an ``http.client.HTTPException`` (not
+    # an ``OSError``); it must stay inside the transport taxonomy.
+    import http.client
+
+    def _incomplete_read(request, timeout=None):
+        raise http.client.IncompleteRead(b"")
+
+    monkeypatch.setattr(
+        decisions_module.urllib.request, "urlopen", _incomplete_read
+    )
+    with pytest.raises(ProviderTransportError) as protocol:
+        adapter.complete(
+            "noul", {"input": {"claim": "c", "evidence": "e"}}, deadline=None
+        )
+    assert protocol.value.kind == "transient"
+
     # HTTP 400 is a deterministic rejection: the raw error body is returned.
     body = json.dumps({"error": "A Choice needs at least 2 options"}).encode("utf-8")
     monkeypatch.setattr(

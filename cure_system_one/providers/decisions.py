@@ -12,6 +12,7 @@ alone, with no per-model constraint table.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import time
@@ -73,7 +74,14 @@ class DecisionsAdapter:
             raise ProviderTransportError(
                 self._classify_status(exc.code), latency_ms=latency
             ) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            http.client.HTTPException,
+        ) as exc:
+            # ``http.client.HTTPException`` (e.g. ``IncompleteRead``) is not an
+            # ``OSError``; a mid-response protocol failure is still transient.
             latency = (time.monotonic() - started) * 1000.0
             raise ProviderTransportError("transient", latency_ms=latency) from exc
         latency = (time.monotonic() - started) * 1000.0

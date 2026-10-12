@@ -92,7 +92,11 @@ def test_evidence_matrix_prompt_vars_off_and_on(tmp_path) -> None:
         exclusions=(exclusion,),
     )
     on = evidence_matrix_prompt_vars(so_ctx, raw_step_paths_text=raw)
-    assert on["EVIDENCE_MATRIX"] == matrix_text
+    assert matrix_text in on["EVIDENCE_MATRIX"]
+    assert "- Evidence matrix (System 1 pre-flight" in on["EVIDENCE_MATRIX"]
+    # Synthesis must cite the repo path:line carried by the rows, never the
+    # matrix artifact itself (it is not primary grounding evidence).
+    assert "never cite the evidence matrix artifact" in on["EVIDENCE_MATRIX_GUIDANCE"]
     assert on["EVIDENCE_MATRIX_GUIDANCE"]
     assert "### Omitted Findings (System 1 Pre-flight)" in on["EVIDENCE_MATRIX_GUIDANCE"]
     assert "citation_unsupported" in on["EVIDENCE_MATRIX_GUIDANCE"]
@@ -124,3 +128,34 @@ def test_evidence_matrix_prompt_vars_missing_or_unreadable_artifact(tmp_path) ->
     result = evidence_matrix_prompt_vars(unreadable, raw_step_paths_text=raw)
     assert result["EVIDENCE_MATRIX"] == ""
     assert result["STEP_OUTPUT_PATHS"] == raw
+
+
+def test_evidence_matrix_prompt_vars_all_excluded_with_passthrough() -> None:
+    from cure_system_one.pipeline import SynthInputs
+    from cure_system_one.preflight import FindingExclusion
+    from cure_system_one.prompt_vars import evidence_matrix_prompt_vars
+
+    raw = "- `step-00.md`\n- `step-01.md`"
+    exclusion = FindingExclusion(
+        cluster_id="c1",
+        step_index=0,
+        card_position=0,
+        layer="semantic",
+        reason="citation_unsupported",
+        preview="weak finding",
+    )
+    so_ctx = SynthInputs(
+        passthrough_paths=("step-01.md",),
+        matrix_path=None,
+        matrix_rows=0,
+        findings_in=1,
+        exclusions=(exclusion,),
+    )
+    result = evidence_matrix_prompt_vars(so_ctx, raw_step_paths_text=raw)
+
+    # Excluded findings must not re-enter synthesis through the raw list: only
+    # the passthrough artifact is read, and the omission block discloses why.
+    assert result["STEP_OUTPUT_PATHS"] == "- `step-01.md`"
+    assert result["EVIDENCE_MATRIX"] == ""
+    assert "citation_unsupported" in result["EVIDENCE_MATRIX_GUIDANCE"]
+    assert "passthrough (read verbatim): `step-01.md`" in result["EVIDENCE_MATRIX_GUIDANCE"]

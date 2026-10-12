@@ -212,11 +212,12 @@ def test_system_one_api_key_check(
         assert warned.status == "warn"
 
     def _network_error(*args: object, **kwargs: object):
-        raise urllib.error.URLError("boom")
+        raise urllib.error.URLError("boom Authorization: Bearer sk-test-key")
 
     calls = _install_urlopen(monkeypatch, _network_error)
     network = _system_one_checks(_decisions_runtime(tmp_path / "network"))["system-one-api-key"]
     assert network.status == "warn"
+    assert "sk-test-key" not in network.detail
 
     def _timeout(*args: object, **kwargs: object):
         raise TimeoutError("timed out")

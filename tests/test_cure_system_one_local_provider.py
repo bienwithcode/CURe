@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -153,11 +154,13 @@ def test_whole_script_upfront_validation(
 
     # Missing file, unreadable file, and directory are all malformed.
     _expect_config_error(str(tmp_path / "missing.json"))
-    unreadable = tmp_path / "unreadable.json"
-    unreadable.write_text("{}", encoding="utf-8")
-    unreadable.chmod(0o000)
-    _expect_config_error(str(unreadable))
-    unreadable.chmod(0o644)
+    # A root runner can read a 0o000 file, so the case only holds for non-root.
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        unreadable = tmp_path / "unreadable.json"
+        unreadable.write_text("{}", encoding="utf-8")
+        unreadable.chmod(0o000)
+        _expect_config_error(str(unreadable))
+        unreadable.chmod(0o644)
     directory = tmp_path / "directory"
     directory.mkdir()
     _expect_config_error(str(directory))

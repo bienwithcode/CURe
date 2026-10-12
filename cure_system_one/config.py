@@ -7,6 +7,7 @@ a disabled snapshot wins over otherwise-invalid values.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -103,10 +104,11 @@ def resolve_system_one_config(raw_section: Any) -> SystemOneConfig:
         )
 
     api_key_env = raw_section.get("api_key_env", DEFAULT_API_KEY_ENV)
-    if not isinstance(api_key_env, str):
+    if not isinstance(api_key_env, str) or not api_key_env.strip():
         raise SystemOneConfigError(
-            "Invalid api_key_env in [system_one] config. Expected a string."
+            "Invalid api_key_env in [system_one] config. Expected a non-blank string."
         )
+    api_key_env = api_key_env.strip()
 
     return SystemOneConfig(
         enabled=True,
@@ -161,7 +163,8 @@ def _require_unit_interval(raw_section: dict[str, Any], key: str, default: float
             f"Invalid {key} in [system_one] config. Expected a number in [0.0, 1.0]."
         )
     resolved = float(value)
-    if resolved < 0.0 or resolved > 1.0:
+    # NaN compares False against every bound, so reject it explicitly.
+    if not math.isfinite(resolved) or resolved < 0.0 or resolved > 1.0:
         raise SystemOneConfigError(
             f"Invalid {key} in [system_one] config. Expected a number in [0.0, 1.0]."
         )
@@ -175,7 +178,7 @@ def _require_temperature(raw_section: dict[str, Any]) -> float:
             "Invalid temperature in [system_one] config. Expected a non-negative number."
         )
     resolved = float(value)
-    if resolved < 0.0:
+    if not math.isfinite(resolved) or resolved < 0.0:
         raise SystemOneConfigError(
             "Invalid temperature in [system_one] config. Expected a non-negative number."
         )

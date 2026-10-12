@@ -46,6 +46,12 @@ def test_config_disabled_resolution_and_non_table() -> None:
         {"enabled": True, "temperature": "hot"},
         {"enabled": True, "model": 123},
         {"enabled": True, "api_key_env": 5},
+        {"enabled": True, "api_key_env": ""},
+        {"enabled": True, "api_key_env": "   "},
+        {"enabled": True, "grounding_confidence_min": float("nan")},
+        {"enabled": True, "finding_acceptance_probability": float("nan")},
+        {"enabled": True, "temperature": float("nan")},
+        {"enabled": True, "temperature": float("inf")},
     ],
 )
 def test_config_value_contract_rejects_invalid(section: dict) -> None:
@@ -123,3 +129,12 @@ def test_default_grounding_threshold_matches_calibrated_decisions() -> None:
     assert DEFAULT_GROUNDING_CONFIDENCE_MIN == 0.6
     resolved = resolve_system_one_config({"enabled": True})
     assert resolved.grounding_confidence_min == 0.6
+
+
+def test_api_key_env_is_stripped() -> None:
+    from cure_system_one.config import resolve_system_one_config
+
+    config = resolve_system_one_config(
+        {"enabled": True, "api_key_env": "  MY_KEY_ENV  "}  # pragma: allowlist secret
+    )
+    assert config.api_key_env == "MY_KEY_ENV"  # pragma: allowlist secret

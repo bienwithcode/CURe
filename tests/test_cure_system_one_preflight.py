@@ -336,6 +336,36 @@ def test_citation_path_traversal_is_dead(
             assert secret not in citation.snippet
 
 
+def test_citation_symlink_escape_is_dead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cure_system_one.preflight import run_preflight
+
+    config = _config()
+    repo = _repo(tmp_path, {"src/a.py": "one\ntwo\n"})
+    secret = "SECRET-SYMLINK-CONTENT"  # pragma: allowlist secret
+    outside = tmp_path / "outside.txt"
+    outside.write_text(f"{secret}\n", encoding="utf-8")
+    try:
+        (repo / "src" / "link.py").symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not supported on this platform")
+    script = {"noul": [{"value": {"probability": 0.9}}] * 2}
+    client = _RecordingClient(_build_client(config, script, tmp_path, monkeypatch))
+    clusters = [
+        _cluster("c1", "- [High] escape. Sources: `src/link.py:1`"),
+        _cluster("c2", "- [High] fine. Sources: `src/a.py:1`"),
+    ]
+    result = run_preflight(clusters, client=client, config=config, repo_dir=repo)
+
+    # A textually in-sandbox path whose symlink resolves outside is dead.
+    assert result.summary is not None
+    assert result.summary.mechanical_excluded == 1
+    assert [row.cluster_id for row in result.rows] == ["c2"]
+    assert [entry.reason for entry in result.exclusions] == ["citation_dead"]
+    assert all(secret not in evidence for _, evidence in client.noul_calls)
+
+
 def test_resolved_citation_cache_reuses_file_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

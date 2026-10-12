@@ -3,7 +3,11 @@
 Adapters own transport only. They return ``(raw_dict, latency_ms)`` or raise
 the internal :class:`ProviderTransportError`; the client owns schema
 validation, retry, and the public error taxonomy. An adapter must never raise a
-public :class:`cure_system_one.errors.SystemOneError`.
+public :class:`cure_system_one.errors.SystemOneError` for a transport or response
+fault. The one exception is an adapter-local configuration fault (e.g. a malformed
+``CURE_SYSTEM_ONE_SCRIPT`` for the local provider), which raises
+:class:`cure_system_one.errors.SystemOneConfigError`; the dedup and pre-flight
+stages catch it and degrade with a ``config`` cause.
 """
 from __future__ import annotations
 
