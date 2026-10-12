@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, replace
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -3313,7 +3314,12 @@ def _doctor_system_one_openrouter_key_probe(key: str, *, timeout_ms: int) -> Doc
             status = int(getattr(response, "status", None) or response.getcode())
     except urllib.error.HTTPError as exc:
         return _doctor_system_one_probe_status_check(exc.code)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+    ) as exc:
         return DoctorCheck(
             name="system-one-api-key",
             status="warn",

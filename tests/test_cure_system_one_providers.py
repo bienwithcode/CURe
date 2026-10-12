@@ -199,6 +199,14 @@ def test_decisions_untranslatable_responses_are_schema_violations(
         client.noul("claim", "evidence")
     assert malformed.value.raw_payload["body"] == "<html>502</html>"
 
+    # A JSON integer too large for float is untranslatable, not a crash.
+    huge = int("1" + "0" * 400)
+    _recorded_decisions(
+        monkeypatch, {"answers": {"noul": {"type": "noul", "noul": huge}}}
+    )
+    with pytest.raises(SystemOneSchemaViolationError):
+        client.noul("claim", "evidence")
+
     # A JSON value that is not an object also keeps the served value.
     _recorded_decisions(monkeypatch, ["not", "an", "object"])
     with pytest.raises(SystemOneSchemaViolationError) as non_object:

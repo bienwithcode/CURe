@@ -429,3 +429,28 @@ def test_batch_filter_rejected_on_decisions(
     with pytest.raises(SystemOneConfigError) as error:
         client.batch_filter(["a"])
     assert "batch_filter" in str(error.value)
+
+
+def test_oversized_integer_is_schema_violation() -> None:
+    from cure_system_one.errors import SystemOneInputError, SystemOneSchemaViolationError
+
+    huge = int("1" + "0" * 400)  # JSON ints are unbounded; float() overflows
+
+    for operation, payload in (
+        ("noul", {"probability": huge}),
+        ("choice", {"selected": "A", "confidence": huge}),
+        ("score", {"score": huge, "confidence": 0.5}),
+    ):
+        client, _, _ = _make_client(_outcomes(payload))
+        with pytest.raises(SystemOneSchemaViolationError):
+            if operation == "noul":
+                client.noul("claim", "evidence")
+            elif operation == "choice":
+                client.choice("subject", ["A", "B"])
+            else:
+                client.score("subject", {"min": 0, "max": 10})
+
+    # An oversized rubric bound is a caller input error, rejected before any call.
+    client, _, _ = _make_client(_outcomes())
+    with pytest.raises(SystemOneInputError):
+        client.score("subject", {"min": 0, "max": huge})

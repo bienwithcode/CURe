@@ -46,8 +46,18 @@ def utc_now_iso() -> str:
 
 
 def is_number(value: Any) -> bool:
-    """True for int/float but not bool."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """True for int/float but not bool, and only when it converts to ``float``.
+
+    JSON integers are unbounded, so an oversized int would make every later
+    ``float()`` raise ``OverflowError``; it is rejected here instead.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        float(value)
+    except OverflowError:
+        return False
+    return True
 
 
 def is_unit_interval(value: Any) -> bool:
@@ -234,7 +244,7 @@ class SystemOneClient:
         raw, latency, attempts = self._invoke(operation, request_payload)
         try:
             return validate(raw)
-        except (ValueError, TypeError, KeyError) as exc:
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
             raise SystemOneSchemaViolationError(
                 operation,
                 raw,

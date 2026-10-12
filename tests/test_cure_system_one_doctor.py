@@ -219,6 +219,17 @@ def test_system_one_api_key_check(
     assert network.status == "warn"
     assert "sk-test-key" not in network.detail
 
+    def _bad_status_line(*args: object, **kwargs: object):
+        import http.client
+
+        raise http.client.BadStatusLine("garbage")
+
+    calls = _install_urlopen(monkeypatch, _bad_status_line)
+    protocol = _system_one_checks(_decisions_runtime(tmp_path / "protocol"))[
+        "system-one-api-key"
+    ]
+    assert protocol.status == "warn"
+
     def _timeout(*args: object, **kwargs: object):
         raise TimeoutError("timed out")
 

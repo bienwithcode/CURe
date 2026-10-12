@@ -245,7 +245,14 @@ def _untranslatable(reason: str, envelope: Any) -> dict[str, Any]:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # An oversized JSON int cannot convert to float; treat it as untranslatable.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        float(value)
+    except OverflowError:
+        return False
+    return True
 
 
 def _single_probability(probabilities: Any) -> Any:
