@@ -4,7 +4,9 @@ Stdlib ``urllib`` only. The adapter owns HTTP, JSON decode, the mapping from a
 provider-neutral ``{operation, input}`` request onto the decisions contract, and
 the internal transport-error taxonomy. It never validates a primitive schema and
 never raises a public ``SystemOneError``: an untranslatable answer is returned as
-the raw envelope so the client's validator owns the schema verdict.
+an ``{"error", "envelope"}`` payload (or ``{"error", "body"}`` for a non-JSON
+body) that carries the served response and can never validate, so the client's
+validator owns the schema verdict.
 
 The adapter is deliberately model-generic: the ``model`` is read from
 ``[system_one].model`` so every decisions-modality model works by configuration
@@ -28,6 +30,8 @@ DECISIONS_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 DECISIONS_AUTH_STATUSES = frozenset({401, 402, 403})
 
 _SUPPORTED_OPERATIONS = frozenset({"noul", "choice", "score"})
+# Cap on the served body echoed into an error payload for debugging.
+_RAW_BODY_CAP_CHARS = 4000
 
 
 class DecisionsAdapter:
@@ -88,7 +92,8 @@ class DecisionsAdapter:
         try:
             envelope = json.loads(raw_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return {"error": "malformed provider response"}, latency
+            body = raw_bytes.decode("utf-8", errors="replace")[:_RAW_BODY_CAP_CHARS]
+            return {"error": "malformed provider response", "body": body}, latency
         fields = request_payload.get("input", {})
         if not isinstance(fields, dict):
             fields = {}
@@ -157,14 +162,23 @@ class DecisionsAdapter:
     def _translate(
         operation: str, envelope: Any, fields: dict[str, Any]
     ) -> dict[str, Any]:
+        """Translate a decisions envelope into the primitive raw shape.
+
+        Any untranslatable response returns an ``{"error", "envelope"}`` payload
+        rather than the bare envelope, so a body whose top-level keys happen to
+        mimic a primitive answer can never validate as one, while the served
+        envelope is still carried for the client's schema-violation record.
+        """
         if not isinstance(envelope, dict):
-            return {"error": "provider response is not a JSON object"}
+            return _untranslatable("provider response is not a JSON object", envelope)
         answers = envelope.get("answers")
         if not isinstance(answers, dict):
-            return envelope
+            return _untranslatable("decisions response has no answers object", envelope)
         answer = answers.get(operation)
         if not isinstance(answer, dict) or answer.get("type") != operation:
-            return envelope
+            return _untranslatable(
+                f"decisions response has no {operation!r} answer", envelope
+            )
         if operation == "noul":
             # The decisions answer carries the probability under ``noul``; the
             # other keys are accepted for recorded/idealized envelopes.
@@ -174,24 +188,24 @@ class DecisionsAdapter:
             if not _is_number(probability):
                 probability = _single_probability(answer.get("probabilities"))
             if not _is_number(probability):
-                return envelope
+                return _untranslatable("noul answer has no probability", envelope)
             return {"probability": probability}
         if operation == "choice":
             selected = answer.get("choice")
             confidence = answer.get("confidence")
             if not isinstance(selected, str) or not _is_number(confidence):
-                return envelope
+                return _untranslatable("choice answer is incomplete", envelope)
             return {"selected": selected, "confidence": confidence}
         if operation == "score":
             index = answer.get("score")
             confidence = answer.get("confidence")
             if not _is_number(index) or not _is_number(confidence):
-                return envelope
+                return _untranslatable("score answer is incomplete", envelope)
             value = _rubric_value(fields, index)
             if value is None:
-                return envelope
+                return _untranslatable("score answer has no usable rubric", envelope)
             return {"score": value, "confidence": confidence}
-        return envelope
+        return _untranslatable(f"unsupported operation {operation!r}", envelope)
 
     # -- transport helpers --------------------------------------------------
 
@@ -223,6 +237,11 @@ class DecisionsAdapter:
                 )
             timeout = min(timeout, remaining)
         return timeout
+
+
+def _untranslatable(reason: str, envelope: Any) -> dict[str, Any]:
+    """Return an error payload that carries the served envelope verbatim."""
+    return {"error": reason, "envelope": envelope}
 
 
 def _is_number(value: Any) -> bool:

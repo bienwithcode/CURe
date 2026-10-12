@@ -148,12 +148,14 @@ def test_decisions_translates_typed_answer(monkeypatch: pytest.MonkeyPatch) -> N
     )
     assert raw == {"score": 7.0, "confidence": 0.5}
 
-    # A missing answer and a mismatched type both return the raw envelope.
+    # A missing answer and a mismatched type both return an error payload that
+    # carries the raw envelope, so it can never validate as a genuine answer.
     _recorded_decisions(monkeypatch, {"answers": {}})
     raw, _ = adapter.complete(
         "noul", {"input": {"claim": "c", "evidence": "e"}}, deadline=None
     )
-    assert raw == {"answers": {}}
+    assert raw["envelope"] == {"answers": {}}
+    assert "probability" not in raw
 
     _recorded_decisions(
         monkeypatch,
@@ -162,7 +164,46 @@ def test_decisions_translates_typed_answer(monkeypatch: pytest.MonkeyPatch) -> N
     raw, _ = adapter.complete(
         "score", {"input": {"subject": "s", "rubric": {"min": 0, "max": 10}}}, deadline=None
     )
-    assert raw["answers"]["score"]["type"] == "choice"
+    assert raw["envelope"]["answers"]["score"]["type"] == "choice"
+
+
+def test_decisions_untranslatable_responses_are_schema_violations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cure_system_one.client import SystemOneClient
+    from cure_system_one.errors import SystemOneSchemaViolationError
+    from cure_system_one.providers import decisions as decisions_module
+    from cure_system_one.providers.decisions import DecisionsAdapter
+
+    config = _decisions_config()
+    client = SystemOneClient(config, DecisionsAdapter(config))
+
+    # A wrapper-less body whose top-level keys mimic the primitive shape must
+    # not pass as a genuine answer.
+    _recorded_decisions(monkeypatch, {"probability": 0.9})
+    with pytest.raises(SystemOneSchemaViolationError) as wrapperless:
+        client.noul("claim", "evidence")
+    assert wrapperless.value.raw_payload["envelope"] == {"probability": 0.9}
+
+    # A non-JSON body keeps the served bytes for debugging.
+    class _RawResponse(_FakeResponse):
+        def __init__(self, body: bytes) -> None:
+            self._bytes = body
+
+    monkeypatch.setattr(
+        decisions_module.urllib.request,
+        "urlopen",
+        lambda request, timeout=None: _RawResponse(b"<html>502</html>"),
+    )
+    with pytest.raises(SystemOneSchemaViolationError) as malformed:
+        client.noul("claim", "evidence")
+    assert malformed.value.raw_payload["body"] == "<html>502</html>"
+
+    # A JSON value that is not an object also keeps the served value.
+    _recorded_decisions(monkeypatch, ["not", "an", "object"])
+    with pytest.raises(SystemOneSchemaViolationError) as non_object:
+        client.noul("claim", "evidence")
+    assert non_object.value.raw_payload["envelope"] == ["not", "an", "object"]
 
 
 def _http_error_raiser(code: int, body: bytes = b"{}"):

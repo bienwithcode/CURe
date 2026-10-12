@@ -117,7 +117,9 @@ class LocalProvider:
             )
         if "fault" in entry:
             fault = entry["fault"]
-            if fault not in _VALID_FAULTS:
+            # Check the type first: an unhashable value (list/object) would make
+            # the frozenset membership test raise TypeError instead.
+            if not isinstance(fault, str) or fault not in _VALID_FAULTS:
                 raise SystemOneConfigError(
                     f"Invalid CURE_SYSTEM_ONE_SCRIPT: unknown fault {fault!r} "
                     f"for {operation!r}."

@@ -329,6 +329,10 @@ def _require_rubric(rubric: Any) -> tuple[float, float]:
         )
     resolved_min = float(minimum)
     resolved_max = float(maximum)
+    if not (math.isfinite(resolved_min) and math.isfinite(resolved_max)):
+        raise SystemOneInputError(
+            "Invalid rubric for System 1 score. Expected finite min and max."
+        )
     if resolved_min > resolved_max:
         raise SystemOneInputError(
             "Invalid rubric for System 1 score. Expected min <= max."

@@ -91,6 +91,8 @@ def resolve_system_one_config(raw_section: Any) -> SystemOneConfig:
         return SystemOneConfig.disabled()
 
     provider = raw_section.get("provider", DEFAULT_PROVIDER)
+    if isinstance(provider, str):
+        provider = provider.strip()
     if provider not in SUPPORTED_PROVIDERS:
         raise SystemOneConfigError(
             f"Unsupported provider in [system_one] config: {provider!r}. "

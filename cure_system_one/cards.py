@@ -18,6 +18,12 @@ UNSPECIFIED_SEVERITY = "unspecified"
 _FINDINGS_TITLE = "Findings"
 _SEVERITY_RE = re.compile(r"^\[(Critical|High|Medium|Low|Info)\]")
 _FENCE_OPEN_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})")
+# A heading that names the Findings section in any other shape (level, case,
+# trailing colon, BOM) than the exact ``### Findings`` contract.
+_FINDINGS_LIKE_HEADING_RE = re.compile(
+    r"^\ufeff?\s{0,3}#{1,6}\s*findings\s*:?\s*$", re.IGNORECASE
+)
+_NON_DASH_BULLET_RE = re.compile(r"^[*+]\s")
 
 
 @dataclass(frozen=True)
@@ -44,7 +50,8 @@ class ArtifactCards:
     """Result of parsing one artifact into finding cards.
 
     ``parse_failed`` distinguishes an artifact whose cards could not be trusted
-    (an unterminated fenced code block) from a degenerate-valid artifact that
+    (an unterminated fenced code block, a non-conforming Findings heading, or a
+    non-``- `` bullet inside Findings) from a degenerate-valid artifact that
     simply carries no findings, so callers can pass the former through
     byte-identically instead of dropping it.
     """
@@ -62,13 +69,18 @@ def parse_findings(text: str, *, step_index: int = 0) -> ArtifactCards:
     ``card_position`` counting from zero across the whole artifact. A heading or
     bullet inside a fenced code block (``` or ~~~) is ignored. A fence left open
     at end of artifact marks the parse failed so the artifact can be passed
-    through byte-identically rather than trusted partially.
+    through byte-identically rather than trusted partially. A Findings-like
+    heading that is not the exact ``### Findings`` contract, or a ``* ``/``+ ``
+    bullet inside Findings, also marks the parse failed so those findings are
+    never silently dropped. An artifact with no Findings heading at all is a
+    degenerate-valid zero-finding artifact.
     """
     cards: list[FindingCard] = []
     in_findings = False
     fence_char: str | None = None
     fence_length = 0
     position = 0
+    failure_reason: str | None = None
     for line in text.splitlines():
         if fence_char is not None:
             if _is_fence_close(line, fence_char, fence_length):
@@ -79,11 +91,21 @@ def parse_findings(text: str, *, step_index: int = 0) -> ArtifactCards:
             fence_char = fence_match.group(2)[0]
             fence_length = len(fence_match.group(2))
             continue
+        if line.startswith("### ") and line[4:].strip() == _FINDINGS_TITLE:
+            in_findings = True
+            continue
+        if _FINDINGS_LIKE_HEADING_RE.match(line):
+            in_findings = False
+            failure_reason = failure_reason or "non-conforming Findings heading"
+            continue
         if line.startswith("### "):
-            in_findings = line[4:].strip() == _FINDINGS_TITLE
+            in_findings = False
             continue
         if line.startswith("## "):
             in_findings = False
+            continue
+        if in_findings and _NON_DASH_BULLET_RE.match(line):
+            failure_reason = failure_reason or "non-dash Findings bullet"
             continue
         if in_findings and line.startswith("- "):
             if line.strip() == NONE_FINDINGS_BULLET:
@@ -104,6 +126,13 @@ def parse_findings(text: str, *, step_index: int = 0) -> ArtifactCards:
             cards=tuple(cards),
             parse_failed=True,
             failure_reason="unterminated fenced code block",
+        )
+    if failure_reason is not None:
+        return ArtifactCards(
+            step_index=step_index,
+            cards=tuple(cards),
+            parse_failed=True,
+            failure_reason=failure_reason,
         )
     return ArtifactCards(step_index=step_index, cards=tuple(cards))
 

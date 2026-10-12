@@ -126,6 +126,14 @@ def test_structural_input_contract_and_degenerate_batch() -> None:
         client.score("subject", "not-a-dict")
     with pytest.raises(SystemOneInputError):
         client.score("", {"min": 0, "max": 10})
+    # Non-finite rubric bounds are caller errors, rejected before any call.
+    for rubric in (
+        {"min": float("nan"), "max": float("nan")},
+        {"min": float("-inf"), "max": float("inf")},
+        {"min": 0, "max": float("inf")},
+    ):
+        with pytest.raises(SystemOneInputError):
+            client.score("subject", rubric)
 
     degenerate = client.batch_filter([])
     assert degenerate["filtered"] == []

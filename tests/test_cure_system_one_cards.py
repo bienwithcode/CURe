@@ -104,3 +104,41 @@ def test_contract_placeholder_is_not_a_card() -> None:
     parsed = parse_findings("### Findings\n- None.\n")
     assert parsed.cards == ()
     assert parsed.parse_failed is False
+
+
+def test_non_conforming_findings_heading_is_parse_failed() -> None:
+    from cure_system_one.cards import parse_findings
+
+    # A Findings-like heading the parser cannot trust must not silently drop
+    # the artifact's findings: it fails parsing and is passed through.
+    for heading in (
+        "## Findings",
+        "#### Findings",
+        "### Findings:",
+        "### findings",
+        "﻿### Findings",
+    ):
+        parsed = parse_findings(f"{heading}\n- [High] y. Sources: `src/b.py:2`\n")
+        assert parsed.parse_failed is True, heading
+        assert parsed.failure_reason
+
+    # No Findings heading at all is still a degenerate-valid zero-finding artifact.
+    none = parse_findings("## Summary\n\n- not a finding\n")
+    assert none.parse_failed is False
+    assert none.cards == ()
+
+
+def test_non_dash_findings_bullet_is_parse_failed() -> None:
+    from cure_system_one.cards import parse_findings
+
+    for bullet in ("* ", "+ "):
+        parsed = parse_findings(
+            f"### Findings\n- [High] ok. Sources: `src/a.py:1`\n{bullet}[High] y\n"
+        )
+        assert parsed.parse_failed is True, bullet
+        assert parsed.failure_reason
+
+    # A bullet under another section is not a Findings bullet.
+    other = parse_findings("### Findings\n- [High] ok\n\n### Notes\n* aside\n")
+    assert other.parse_failed is False
+    assert len(other.cards) == 1

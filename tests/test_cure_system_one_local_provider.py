@@ -173,6 +173,14 @@ def test_whole_script_upfront_validation(
     unknown_fault.write_text(json.dumps({"noul": [{"fault": "429x"}]}), encoding="utf-8")
     _expect_config_error(str(unknown_fault))
 
+    # An unhashable fault value is malformed config, not a TypeError crash.
+    for fault in (["timeout"], {"kind": "timeout"}):
+        unhashable_fault = tmp_path / "unhashable_fault.json"
+        unhashable_fault.write_text(
+            json.dumps({"noul": [{"fault": fault}]}), encoding="utf-8"
+        )
+        _expect_config_error(str(unhashable_fault))
+
     wrong_shape = tmp_path / "wrong_shape.json"
     wrong_shape.write_text(json.dumps({"noul": [{"weird": 1}]}), encoding="utf-8")
     _expect_config_error(str(wrong_shape))
@@ -376,8 +384,12 @@ def test_instant_timeout_and_schema_violation_carrier(
 def test_chunked_batch_one_outcome_per_chunk(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from cure_system_one import client as client_module
     from cure_system_one.client import SystemOneClient
 
+    # Scripted outcomes are consumed FIFO by whichever chunk calls first, so
+    # serialize the chunks to pin the single outcome onto chunk 0.
+    monkeypatch.setattr(client_module, "MAX_BATCH_FILTER_WORKERS", 1)
     path = _write_script(
         tmp_path, {"batch_filter": [{"value": {"filtered": ["item-0"]}}]}
     )

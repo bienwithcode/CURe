@@ -138,3 +138,9 @@ def test_api_key_env_is_stripped() -> None:
         {"enabled": True, "api_key_env": "  MY_KEY_ENV  "}  # pragma: allowlist secret
     )
     assert config.api_key_env == "MY_KEY_ENV"  # pragma: allowlist secret
+
+
+def test_provider_is_stripped() -> None:
+    from cure_system_one.config import resolve_system_one_config
+
+    assert resolve_system_one_config({"enabled": True, "provider": " local "}).provider == "local"
